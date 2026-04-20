@@ -378,6 +378,26 @@
 
   function fmtPeriod(p) { return `${p.id}限 ${p.start}〜${p.end}`; }
 
+  const ATTENDANCE_PRE_MIN = 20;
+  const ATTENDANCE_POST_MIN = 60;
+  function attendanceWindow(m) {
+    const start = timeToMin(m._startP.start);
+    return { open: start - ATTENDANCE_PRE_MIN, close: start + ATTENDANCE_POST_MIN };
+  }
+  function fmtRelMin(min) {
+    if (min < 1) return '1分未満';
+    if (min < 60) return `${min}分`;
+    const h = Math.floor(min / 60);
+    const r = min % 60;
+    return r ? `${h}時間${r}分` : `${h}時間`;
+  }
+  function attendanceStatus(m, now = nowMin()) {
+    const w = attendanceWindow(m);
+    if (now < w.open) return { state: 'pre', msg: `操作可能まであと${fmtRelMin(w.open - now)}` };
+    if (now > w.close) return { state: 'post', msg: '操作可能時間を過ぎました' };
+    return { state: 'open', msg: `あと${fmtRelMin(w.close - now)}操作可能` };
+  }
+
   // ====== Rendering ======
   function renderToday() {
     const root = document.getElementById('tab-today');
@@ -389,27 +409,37 @@
 
     let html = '';
 
+    function bigBtn(m) {
+      if (!m.room) return `<div class="big-btn" style="background:#e5e7eb;color:#6b7280;cursor:not-allowed;">教室番号が未設定です</div>`;
+      const st = attendanceStatus(m, nowM);
+      if (st.state !== 'open') {
+        return `<div class="big-btn" style="background:#e5e7eb;color:#6b7280;cursor:not-allowed;">${st.msg}</div>`;
+      }
+      return `<a class="big-btn" href="${attendanceLink(m.room)}" target="_blank" rel="noopener">出席サイトを開く →</a>`;
+    }
+    function statusLine(m) {
+      const st = attendanceStatus(m, nowM);
+      const color = st.state === 'open' ? '#a7f3d0' : 'rgba(255,255,255,0.7)';
+      return `<div style="font-size:12px;color:${color};margin-bottom:10px;">${st.msg}</div>`;
+    }
+
     if (current) {
-      const btn = current.room
-        ? `<a class="big-btn" href="${attendanceLink(current.room)}" target="_blank" rel="noopener">出席サイトを開く →</a>`
-        : `<div class="big-btn" style="background:#e5e7eb;color:#6b7280;cursor:not-allowed;">教室番号が未設定です</div>`;
       html += `
         <div class="card now-card">
           <div class="now-label">今の講義</div>
           <h2 class="now-title">${escapeHtml(current.name)}</h2>
           <div class="now-meta">${periodLabel(current)} ${current._startP.start}〜${current._endP.end} ・ 教室 ${escapeHtml(fmtRoom(current.room))}</div>
-          ${btn}
+          ${statusLine(current)}
+          ${bigBtn(current)}
         </div>`;
     } else if (next) {
-      const btn = next.room
-        ? `<a class="big-btn" href="${attendanceLink(next.room)}" target="_blank" rel="noopener">出席サイトを開く →</a>`
-        : `<div class="big-btn" style="background:#e5e7eb;color:#6b7280;cursor:not-allowed;">教室番号が未設定です</div>`;
       html += `
         <div class="card now-card" style="background:linear-gradient(135deg,#475569,#334155);">
           <div class="now-label">次の講義</div>
           <h2 class="now-title">${escapeHtml(next.name)}</h2>
           <div class="now-meta">${periodLabel(next)} ${next._startP.start}〜${next._endP.end} ・ 教室 ${escapeHtml(fmtRoom(next.room))}</div>
-          ${btn}
+          ${statusLine(next)}
+          ${bigBtn(next)}
         </div>`;
     } else {
       html += `<div class="card"><div class="empty">${today.length ? '本日の講義は終了しました' : '今日は講義がありません'}</div></div>`;
@@ -425,9 +455,16 @@
         let cls = 'list-item';
         if (em <= nowM) cls += ' past';
         else if (pm <= nowM && em > nowM) cls += ' current';
-        const link = m.room
-          ? `<a class="list-link" href="${attendanceLink(m.room)}" target="_blank" rel="noopener">開く</a>`
-          : `<span class="list-link" style="background:var(--panel-2);color:var(--muted);">未設定</span>`;
+        const st = attendanceStatus(m, nowM);
+        let link;
+        if (!m.room) {
+          link = `<span class="list-link" style="background:var(--panel-2);color:var(--muted);">未設定</span>`;
+        } else if (st.state === 'open') {
+          link = `<a class="list-link" href="${attendanceLink(m.room)}" target="_blank" rel="noopener">開く</a>`;
+        } else {
+          const label = st.state === 'pre' ? '時間外' : '終了';
+          link = `<span class="list-link" style="background:var(--panel-2);color:var(--muted);">${label}</span>`;
+        }
         const badge = m.startPeriod === m.endPeriod
           ? `${m.startPeriod}`
           : `${m.startPeriod}-${m.endPeriod}`;
