@@ -247,8 +247,10 @@
         <select name="period" required></select>
       </label>
     </div>
-    <label>教室番号（空欄可）
-      <input type="text" name="room" maxlength="30" placeholder="例: 5202">
+    <label>教室番号（空欄可 ／ 3桁=津田沼・4桁=新習志野）
+      <input type="text" name="room" inputmode="numeric" pattern="\d{3,4}" maxlength="4" placeholder="例: 5202"
+        title="3桁または4桁の半角数字で入力してください">
+      <div id="room-campus-hint" style="font-size:12px;color:var(--muted);margin-top:4px;min-height:1em;"></div>
     </label>
     <div class="btn-row" style="margin-top:8px;">
       <button type="button" class="btn secondary" id="dialog-cancel">キャンセル</button>
@@ -298,6 +300,23 @@
   function timeToMin(t) { const [h, m] = t.split(':').map(Number); return h * 60 + m; }
   function nowMin(d = new Date()) { return d.getHours() * 60 + d.getMinutes(); }
   function periodById(id) { return state.periods.find(p => p.id === id); }
+
+  function normalizeRoom(raw) {
+    if (raw == null) return '';
+    const half = String(raw).replace(/[０-９]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0));
+    return half.replace(/[^0-9]/g, '').slice(0, 4);
+  }
+  function campusOf(room) {
+    const r = String(room || '');
+    if (r.length === 4) return '新習志野キャンパス';
+    if (r.length === 3) return '津田沼キャンパス';
+    return '';
+  }
+  function fmtRoom(room) {
+    if (!room) return '未設定';
+    const c = campusOf(room);
+    return c ? `${room}（${c}）` : room;
+  }
 
   function dayClassesSorted(day) {
     return state.classes
@@ -377,7 +396,7 @@
         <div class="card now-card">
           <div class="now-label">今の講義</div>
           <h2 class="now-title">${escapeHtml(current.name)}</h2>
-          <div class="now-meta">${periodLabel(current)} ${current._startP.start}〜${current._endP.end} ・ 教室 ${escapeHtml(current.room || '未設定')}</div>
+          <div class="now-meta">${periodLabel(current)} ${current._startP.start}〜${current._endP.end} ・ 教室 ${escapeHtml(fmtRoom(current.room))}</div>
           ${btn}
         </div>`;
     } else if (next) {
@@ -388,7 +407,7 @@
         <div class="card now-card" style="background:linear-gradient(135deg,#475569,#334155);">
           <div class="now-label">次の講義</div>
           <h2 class="now-title">${escapeHtml(next.name)}</h2>
-          <div class="now-meta">${periodLabel(next)} ${next._startP.start}〜${next._endP.end} ・ 教室 ${escapeHtml(next.room || '未設定')}</div>
+          <div class="now-meta">${periodLabel(next)} ${next._startP.start}〜${next._endP.end} ・ 教室 ${escapeHtml(fmtRoom(next.room))}</div>
           ${btn}
         </div>`;
     } else {
@@ -417,7 +436,7 @@
             <div class="list-period" ${badgeStyle}>${badge}</div>
             <div class="list-main">
               <div class="list-name">${escapeHtml(m.name)}</div>
-              <div class="list-sub">${m._startP.start}〜${m._endP.end} ・ ${escapeHtml(m.room || '教室未設定')}</div>
+              <div class="list-sub">${m._startP.start}〜${m._endP.end} ・ ${escapeHtml(m.room ? fmtRoom(m.room) : '教室未設定')}</div>
             </div>
             ${link}
           </div>`;
@@ -508,7 +527,7 @@
             <div class="list-period">${DAY_NAMES[c.day]}${c.period}</div>
             <div class="list-main">
               <div class="list-name">${escapeHtml(c.name)}</div>
-              <div class="list-sub">${p ? p.start + '〜' + p.end : '?'} ・ 教室 ${escapeHtml(c.room)}</div>
+              <div class="list-sub">${p ? p.start + '〜' + p.end : '?'} ・ 教室 ${escapeHtml(fmtRoom(c.room))}</div>
             </div>
           </div>`;
       }).join('');
@@ -587,6 +606,20 @@
   const dialogTitle = document.getElementById('dialog-title');
   let editingId = null;
 
+  const roomHint = document.getElementById('room-campus-hint');
+  function updateRoomHint() {
+    const v = dialogForm.room.value;
+    if (!v) { roomHint.textContent = ''; roomHint.style.color = 'var(--muted)'; return; }
+    const c = campusOf(v);
+    if (c) { roomHint.textContent = c; roomHint.style.color = 'var(--muted)'; }
+    else { roomHint.textContent = '3桁または4桁の数字で入力してください'; roomHint.style.color = 'var(--warn)'; }
+  }
+  dialogForm.room.addEventListener('input', () => {
+    const norm = normalizeRoom(dialogForm.room.value);
+    if (dialogForm.room.value !== norm) dialogForm.room.value = norm;
+    updateRoomHint();
+  });
+
   function openClassDialog(id, defaults = {}) {
     editingId = id;
     // populate period options
@@ -599,7 +632,7 @@
       dialogForm.name.value = c.name;
       dialogForm.day.value = String(c.day);
       dialogForm.period.value = String(c.period);
-      dialogForm.room.value = c.room;
+      dialogForm.room.value = normalizeRoom(c.room);
       dialogDelete.hidden = false;
     } else {
       dialogTitle.textContent = '講義を追加';
@@ -608,6 +641,7 @@
       if (defaults.period != null) dialogForm.period.value = String(defaults.period);
       dialogDelete.hidden = true;
     }
+    updateRoomHint();
     dialog.showModal();
   }
   function findMergeSiblingIds(c) {
@@ -619,11 +653,16 @@
   dialogForm.addEventListener('submit', e => {
     e.preventDefault();
     const fd = new FormData(dialogForm);
+    const room = normalizeRoom(fd.get('room'));
+    if (room && room.length !== 3 && room.length !== 4) {
+      alert('教室番号は3桁または4桁の半角数字で入力してください');
+      return;
+    }
     const payload = {
       name: fd.get('name').trim(),
       day: Number(fd.get('day')),
       period: Number(fd.get('period')),
-      room: fd.get('room').trim(),
+      room,
     };
     if (!payload.name) return;
     if (editingId) {
@@ -717,7 +756,7 @@
 
   function parseClassBlock(lines) {
     const ROOM_TYPE_RE = /(講義室|演習室|実験室|教室|製図室|研究室|実習室)/;
-    const ROOM_NUM_RE = /([０-９0-9]{3,5})(?=講義室|演習室|実験室|教室|製図室|研究室|実習室)/;
+    const ROOM_NUM_RE = /([０-９0-9]{3,4})(?=講義室|演習室|実験室|教室|製図室|研究室|実習室)/;
     const CAMPUS_RE = /キャンパ/;
     let roomIdx = -1, campusIdx = -1;
     for (let i = 0; i < lines.length; i++) {
