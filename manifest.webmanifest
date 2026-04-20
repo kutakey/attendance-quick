@@ -1,0 +1,19 @@
+{
+  "name": "出席クイック",
+  "short_name": "出席",
+  "description": "千葉工大の出席サイトにワンタップで飛べる時間割アプリ",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#0f172a",
+  "theme_color": "#1e3a8a",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

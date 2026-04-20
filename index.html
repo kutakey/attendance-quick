@@ -1,0 +1,575 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1e3a8a">
+<title>出席クイック</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/svg+xml" href="icon.svg">
+<link rel="apple-touch-icon" href="icon.svg">
+<style>
+  :root {
+    --bg: #0f172a;
+    --panel: #1e293b;
+    --panel-2: #334155;
+    --accent: #3b82f6;
+    --accent-strong: #2563eb;
+    --text: #f1f5f9;
+    --muted: #94a3b8;
+    --ok: #10b981;
+    --warn: #f59e0b;
+    --danger: #ef4444;
+    --radius: 14px;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", system-ui, sans-serif;
+    min-height: 100dvh;
+    -webkit-tap-highlight-color: transparent;
+  }
+  body {
+    padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+    max-width: 720px; margin: 0 auto;
+  }
+  header {
+    padding: 20px 20px 12px;
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  h1 { font-size: 20px; margin: 0; letter-spacing: 0.02em; }
+  .tabs {
+    display: flex; gap: 4px; padding: 0 16px 12px;
+    position: sticky; top: 0; background: var(--bg); z-index: 10;
+  }
+  .tabs button {
+    flex: 1; padding: 10px 0;
+    background: var(--panel); color: var(--muted);
+    border: none; border-radius: 10px;
+    font-size: 14px; font-weight: 600;
+    cursor: pointer; transition: all 0.15s;
+  }
+  .tabs button.active { background: var(--accent); color: white; }
+  main { padding: 4px 16px 80px; }
+
+  .card {
+    background: var(--panel);
+    border-radius: var(--radius);
+    padding: 16px;
+    margin-bottom: 12px;
+  }
+
+  .now-card {
+    background: linear-gradient(135deg, var(--accent-strong), #4f46e5);
+    padding: 20px;
+  }
+  .now-label {
+    font-size: 12px; opacity: 0.85;
+    text-transform: uppercase; letter-spacing: 0.1em;
+    margin-bottom: 6px;
+  }
+  .now-title { font-size: 22px; font-weight: 700; margin: 0 0 4px; }
+  .now-meta { font-size: 13px; opacity: 0.85; margin-bottom: 16px; }
+  .big-btn {
+    display: block; width: 100%;
+    background: white; color: var(--accent-strong);
+    padding: 18px; border-radius: 12px;
+    text-align: center; text-decoration: none;
+    font-size: 17px; font-weight: 700;
+    border: none; cursor: pointer;
+    transition: transform 0.08s;
+  }
+  .big-btn:active { transform: scale(0.98); }
+
+  .empty {
+    text-align: center; padding: 40px 20px; color: var(--muted);
+  }
+
+  .list-item {
+    display: flex; align-items: center; gap: 12px;
+    padding: 14px; background: var(--panel);
+    border-radius: var(--radius); margin-bottom: 8px;
+    text-decoration: none; color: var(--text);
+  }
+  .list-item.past { opacity: 0.5; }
+  .list-item.current { border: 2px solid var(--accent); }
+  .list-period {
+    background: var(--panel-2);
+    width: 48px; height: 48px; border-radius: 10px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 18px; font-weight: 700; flex-shrink: 0;
+  }
+  .list-main { flex: 1; min-width: 0; }
+  .list-name { font-weight: 600; font-size: 15px; margin-bottom: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .list-sub { font-size: 12px; color: var(--muted); }
+  .list-link {
+    background: var(--accent); color: white;
+    padding: 8px 12px; border-radius: 8px;
+    text-decoration: none; font-size: 13px; font-weight: 600;
+    white-space: nowrap;
+  }
+
+  .section-title {
+    font-size: 13px; font-weight: 600; color: var(--muted);
+    margin: 16px 4px 8px; text-transform: uppercase; letter-spacing: 0.08em;
+  }
+
+  .grid {
+    display: grid; grid-template-columns: 40px repeat(5, 1fr);
+    gap: 4px;
+  }
+  .grid .head {
+    text-align: center; font-size: 12px; color: var(--muted);
+    padding: 6px 0; font-weight: 600;
+  }
+  .grid .cell {
+    background: var(--panel); border-radius: 8px;
+    padding: 8px 4px; min-height: 64px;
+    font-size: 11px; text-align: center;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    color: var(--text); border: none; cursor: pointer;
+  }
+  .grid .cell.filled { background: var(--accent-strong); color: white; }
+  .grid .cell.empty-cell { background: var(--panel); color: var(--muted); font-size: 18px; }
+  .grid .cell-name { font-weight: 600; line-height: 1.2; word-break: break-all; }
+  .grid .cell-room { font-size: 10px; opacity: 0.8; margin-top: 2px; }
+
+  form { display: flex; flex-direction: column; gap: 10px; }
+  label { font-size: 13px; color: var(--muted); margin-bottom: 2px; }
+  input, select {
+    width: 100%; padding: 12px; border-radius: 10px;
+    background: var(--panel-2); color: var(--text);
+    border: 1px solid transparent; font-size: 15px;
+  }
+  input:focus, select:focus { outline: none; border-color: var(--accent); }
+  .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .btn {
+    padding: 12px; border-radius: 10px; border: none;
+    font-size: 15px; font-weight: 600; cursor: pointer;
+    background: var(--accent); color: white;
+  }
+  .btn.secondary { background: var(--panel-2); color: var(--text); }
+  .btn.danger { background: var(--danger); color: white; }
+  .btn-row { display: flex; gap: 8px; }
+  .btn-row > * { flex: 1; }
+
+  dialog {
+    background: var(--panel); color: var(--text);
+    border: none; border-radius: var(--radius);
+    padding: 20px; max-width: 92vw; width: 400px;
+  }
+  dialog::backdrop { background: rgba(0,0,0,0.6); }
+  dialog h2 { margin: 0 0 14px; font-size: 18px; }
+
+  .period-row {
+    display: grid; grid-template-columns: 30px 1fr 1fr;
+    gap: 8px; align-items: center; margin-bottom: 8px;
+  }
+  .period-row span { color: var(--muted); font-size: 14px; text-align: center; }
+
+  .footer-note {
+    text-align: center; color: var(--muted);
+    font-size: 11px; margin-top: 24px; padding: 12px;
+  }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+<header>
+  <h1>出席クイック</h1>
+  <span id="clock" style="font-size:13px;color:var(--muted);font-variant-numeric:tabular-nums;"></span>
+</header>
+<nav class="tabs">
+  <button data-tab="today" class="active">今日</button>
+  <button data-tab="week">時間割</button>
+  <button data-tab="settings">設定</button>
+</nav>
+<main>
+  <section id="tab-today"></section>
+  <section id="tab-week" hidden></section>
+  <section id="tab-settings" hidden></section>
+</main>
+
+<dialog id="class-dialog">
+  <h2 id="dialog-title">講義を追加</h2>
+  <form id="class-form">
+    <label>講義名
+      <input type="text" name="name" required maxlength="40" placeholder="例: プログラミング基礎">
+    </label>
+    <div class="form-row">
+      <label>曜日
+        <select name="day" required>
+          <option value="1">月</option>
+          <option value="2">火</option>
+          <option value="3">水</option>
+          <option value="4">木</option>
+          <option value="5">金</option>
+          <option value="6">土</option>
+          <option value="0">日</option>
+        </select>
+      </label>
+      <label>時限
+        <select name="period" required></select>
+      </label>
+    </div>
+    <label>教室番号
+      <input type="text" name="room" required maxlength="30" placeholder="例: 12345">
+    </label>
+    <div class="btn-row" style="margin-top:8px;">
+      <button type="button" class="btn secondary" id="dialog-cancel">キャンセル</button>
+      <button type="button" class="btn danger" id="dialog-delete" hidden>削除</button>
+      <button type="submit" class="btn">保存</button>
+    </div>
+  </form>
+</dialog>
+
+<script>
+  const ATTENDANCE_URL = 'https://attendance.is.it-chiba.ac.jp/attendance/class_room/';
+  const STORAGE_KEY = 'attendance-app-v1';
+  const DAY_NAMES = ['日', '月', '火', '水', '木', '金', '土'];
+  const DEFAULT_PERIODS = [
+    { id: 1, start: '09:00', end: '10:30' },
+    { id: 2, start: '10:40', end: '12:10' },
+    { id: 3, start: '13:00', end: '14:30' },
+    { id: 4, start: '14:40', end: '16:10' },
+    { id: 5, start: '16:20', end: '17:50' },
+  ];
+
+  function loadState() {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (raw) {
+        const s = JSON.parse(raw);
+        return {
+          periods: Array.isArray(s.periods) && s.periods.length ? s.periods : [...DEFAULT_PERIODS],
+          classes: Array.isArray(s.classes) ? s.classes : [],
+        };
+      }
+    } catch {}
+    return { periods: [...DEFAULT_PERIODS], classes: [] };
+  }
+  function saveState() { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }
+  let state = loadState();
+
+  function uid() { return Math.random().toString(36).slice(2, 10); }
+  function timeToMin(t) { const [h, m] = t.split(':').map(Number); return h * 60 + m; }
+  function nowMin(d = new Date()) { return d.getHours() * 60 + d.getMinutes(); }
+  function periodById(id) { return state.periods.find(p => p.id === id); }
+
+  function findCurrentClass(date = new Date()) {
+    const day = date.getDay();
+    const min = nowMin(date);
+    for (const c of state.classes) {
+      if (c.day !== day) continue;
+      const p = periodById(c.period);
+      if (!p) continue;
+      if (min >= timeToMin(p.start) && min <= timeToMin(p.end)) return { ...c, period: p };
+    }
+    return null;
+  }
+  function findNextClass(date = new Date()) {
+    const day = date.getDay();
+    const min = nowMin(date);
+    const today = state.classes
+      .filter(c => c.day === day)
+      .map(c => ({ ...c, _p: periodById(c.period) }))
+      .filter(c => c._p && timeToMin(c._p.start) > min)
+      .sort((a, b) => timeToMin(a._p.start) - timeToMin(b._p.start));
+    return today[0] || null;
+  }
+  function todayClassesSorted(date = new Date()) {
+    const day = date.getDay();
+    return state.classes
+      .filter(c => c.day === day)
+      .map(c => ({ ...c, _p: periodById(c.period) }))
+      .filter(c => c._p)
+      .sort((a, b) => timeToMin(a._p.start) - timeToMin(b._p.start));
+  }
+
+  function attendanceLink(room) {
+    return ATTENDANCE_URL + encodeURIComponent(room);
+  }
+
+  function fmtPeriod(p) { return `${p.id}限 ${p.start}〜${p.end}`; }
+
+  // ====== Rendering ======
+  function renderToday() {
+    const root = document.getElementById('tab-today');
+    const current = findCurrentClass();
+    const next = findNextClass();
+    const today = todayClassesSorted();
+    const now = new Date();
+    const nowM = nowMin(now);
+
+    let html = '';
+
+    if (current) {
+      html += `
+        <div class="card now-card">
+          <div class="now-label">今の講義</div>
+          <h2 class="now-title">${escapeHtml(current.name)}</h2>
+          <div class="now-meta">${current.period.id}限 ${current.period.start}〜${current.period.end} ・ 教室 ${escapeHtml(current.room)}</div>
+          <a class="big-btn" href="${attendanceLink(current.room)}" target="_blank" rel="noopener">出席サイトを開く →</a>
+        </div>`;
+    } else if (next) {
+      html += `
+        <div class="card now-card" style="background:linear-gradient(135deg,#475569,#334155);">
+          <div class="now-label">次の講義</div>
+          <h2 class="now-title">${escapeHtml(next.name)}</h2>
+          <div class="now-meta">${next._p.id}限 ${next._p.start}〜${next._p.end} ・ 教室 ${escapeHtml(next.room)}</div>
+          <a class="big-btn" href="${attendanceLink(next.room)}" target="_blank" rel="noopener">出席サイトを開く →</a>
+        </div>`;
+    } else {
+      html += `<div class="card"><div class="empty">${today.length ? '本日の講義は終了しました' : '今日は講義がありません'}</div></div>`;
+    }
+
+    html += `<div class="section-title">${DAY_NAMES[now.getDay()]}曜日の時間割</div>`;
+    if (today.length === 0) {
+      html += `<div class="card"><div class="empty">登録された講義はありません<br><br><a href="#" onclick="switchTab('settings');return false;">設定から追加</a></div></div>`;
+    } else {
+      html += today.map(c => {
+        const pm = timeToMin(c._p.start);
+        const em = timeToMin(c._p.end);
+        let cls = 'list-item';
+        if (em < nowM) cls += ' past';
+        else if (pm <= nowM && em >= nowM) cls += ' current';
+        return `
+          <div class="${cls}">
+            <div class="list-period">${c._p.id}</div>
+            <div class="list-main">
+              <div class="list-name">${escapeHtml(c.name)}</div>
+              <div class="list-sub">${c._p.start}〜${c._p.end} ・ ${escapeHtml(c.room)}</div>
+            </div>
+            <a class="list-link" href="${attendanceLink(c.room)}" target="_blank" rel="noopener">開く</a>
+          </div>`;
+      }).join('');
+    }
+    root.innerHTML = html;
+  }
+
+  function renderWeek() {
+    const root = document.getElementById('tab-week');
+    const days = [1, 2, 3, 4, 5];
+    const periods = state.periods;
+
+    let html = '<div class="grid">';
+    html += '<div class="head"></div>';
+    html += days.map(d => `<div class="head">${DAY_NAMES[d]}</div>`).join('');
+    for (const p of periods) {
+      html += `<div class="head">${p.id}</div>`;
+      for (const d of days) {
+        const c = state.classes.find(x => x.day === d && x.period === p.id);
+        if (c) {
+          html += `<button class="cell filled" data-edit="${c.id}">
+            <div class="cell-name">${escapeHtml(c.name)}</div>
+            <div class="cell-room">${escapeHtml(c.room)}</div>
+          </button>`;
+        } else {
+          html += `<button class="cell empty-cell" data-add-day="${d}" data-add-period="${p.id}">+</button>`;
+        }
+      }
+    }
+    html += '</div>';
+    html += `<div class="footer-note">セルをタップして講義を追加/編集</div>`;
+    root.innerHTML = html;
+
+    root.querySelectorAll('[data-edit]').forEach(el => {
+      el.addEventListener('click', () => openClassDialog(el.dataset.edit));
+    });
+    root.querySelectorAll('[data-add-day]').forEach(el => {
+      el.addEventListener('click', () => {
+        openClassDialog(null, { day: Number(el.dataset.addDay), period: Number(el.dataset.addPeriod) });
+      });
+    });
+  }
+
+  function renderSettings() {
+    const root = document.getElementById('tab-settings');
+    let html = `
+      <div class="section-title">講義の追加</div>
+      <div class="card">
+        <button class="btn" id="add-class-btn">＋ 新しい講義を追加</button>
+      </div>
+      <div class="section-title">登録済み講義（${state.classes.length}）</div>`;
+
+    if (state.classes.length === 0) {
+      html += `<div class="card"><div class="empty">まだ登録がありません</div></div>`;
+    } else {
+      const sorted = [...state.classes].sort((a, b) => a.day - b.day || a.period - b.period);
+      html += sorted.map(c => {
+        const p = periodById(c.period);
+        return `
+          <div class="list-item" data-edit="${c.id}" style="cursor:pointer;">
+            <div class="list-period">${DAY_NAMES[c.day]}${c.period}</div>
+            <div class="list-main">
+              <div class="list-name">${escapeHtml(c.name)}</div>
+              <div class="list-sub">${p ? p.start + '〜' + p.end : '?'} ・ 教室 ${escapeHtml(c.room)}</div>
+            </div>
+          </div>`;
+      }).join('');
+    }
+
+    html += `<div class="section-title">時限の時間設定</div><div class="card" id="periods-card"></div>`;
+    html += `<div class="section-title">データ</div>
+      <div class="card">
+        <div class="btn-row">
+          <button class="btn secondary" id="export-btn">エクスポート</button>
+          <button class="btn secondary" id="import-btn">インポート</button>
+        </div>
+        <div style="height:8px"></div>
+        <button class="btn danger" id="reset-btn">全データを削除</button>
+      </div>`;
+    html += `<div class="footer-note">データはこの端末のブラウザに保存されます（localStorage）</div>`;
+
+    root.innerHTML = html;
+
+    // Periods editor
+    const pCard = document.getElementById('periods-card');
+    pCard.innerHTML = state.periods.map((p, i) => `
+      <div class="period-row">
+        <span>${p.id}限</span>
+        <input type="time" data-period-idx="${i}" data-field="start" value="${p.start}">
+        <input type="time" data-period-idx="${i}" data-field="end" value="${p.end}">
+      </div>
+    `).join('');
+    pCard.querySelectorAll('input[type=time]').forEach(inp => {
+      inp.addEventListener('change', () => {
+        const i = Number(inp.dataset.periodIdx);
+        state.periods[i][inp.dataset.field] = inp.value;
+        saveState();
+        renderAll();
+      });
+    });
+
+    document.getElementById('add-class-btn').addEventListener('click', () => openClassDialog(null));
+    root.querySelectorAll('[data-edit]').forEach(el => {
+      el.addEventListener('click', () => openClassDialog(el.dataset.edit));
+    });
+    document.getElementById('reset-btn').addEventListener('click', () => {
+      if (confirm('本当に全データを削除しますか？')) {
+        localStorage.removeItem(STORAGE_KEY);
+        state = loadState();
+        renderAll();
+      }
+    });
+    document.getElementById('export-btn').addEventListener('click', () => {
+      const blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'attendance-timetable.json';
+      a.click();
+      URL.revokeObjectURL(a.href);
+    });
+    document.getElementById('import-btn').addEventListener('click', () => {
+      const inp = document.createElement('input');
+      inp.type = 'file'; inp.accept = 'application/json';
+      inp.onchange = async () => {
+        const f = inp.files[0]; if (!f) return;
+        try {
+          const data = JSON.parse(await f.text());
+          if (data.periods && data.classes) {
+            state = data; saveState(); renderAll();
+            alert('インポートしました');
+          } else alert('形式が不正です');
+        } catch { alert('読み込みに失敗しました'); }
+      };
+      inp.click();
+    });
+  }
+
+  // ====== Dialog ======
+  const dialog = document.getElementById('class-dialog');
+  const dialogForm = document.getElementById('class-form');
+  const dialogDelete = document.getElementById('dialog-delete');
+  const dialogTitle = document.getElementById('dialog-title');
+  let editingId = null;
+
+  function openClassDialog(id, defaults = {}) {
+    editingId = id;
+    // populate period options
+    const periodSel = dialogForm.period;
+    periodSel.innerHTML = state.periods.map(p => `<option value="${p.id}">${p.id}限 (${p.start}〜${p.end})</option>`).join('');
+    if (id) {
+      const c = state.classes.find(x => x.id === id);
+      if (!c) return;
+      dialogTitle.textContent = '講義を編集';
+      dialogForm.name.value = c.name;
+      dialogForm.day.value = String(c.day);
+      dialogForm.period.value = String(c.period);
+      dialogForm.room.value = c.room;
+      dialogDelete.hidden = false;
+    } else {
+      dialogTitle.textContent = '講義を追加';
+      dialogForm.reset();
+      if (defaults.day != null) dialogForm.day.value = String(defaults.day);
+      if (defaults.period != null) dialogForm.period.value = String(defaults.period);
+      dialogDelete.hidden = true;
+    }
+    dialog.showModal();
+  }
+  dialogForm.addEventListener('submit', e => {
+    e.preventDefault();
+    const fd = new FormData(dialogForm);
+    const payload = {
+      name: fd.get('name').trim(),
+      day: Number(fd.get('day')),
+      period: Number(fd.get('period')),
+      room: fd.get('room').trim(),
+    };
+    if (!payload.name || !payload.room) return;
+    if (editingId) {
+      const i = state.classes.findIndex(c => c.id === editingId);
+      if (i >= 0) state.classes[i] = { ...state.classes[i], ...payload };
+    } else {
+      state.classes.push({ id: uid(), ...payload });
+    }
+    saveState();
+    dialog.close();
+    renderAll();
+  });
+  document.getElementById('dialog-cancel').addEventListener('click', () => dialog.close());
+  dialogDelete.addEventListener('click', () => {
+    if (!editingId) return;
+    if (!confirm('この講義を削除しますか？')) return;
+    state.classes = state.classes.filter(c => c.id !== editingId);
+    saveState();
+    dialog.close();
+    renderAll();
+  });
+
+  // ====== Tabs ======
+  function switchTab(name) {
+    document.querySelectorAll('.tabs button').forEach(b => {
+      b.classList.toggle('active', b.dataset.tab === name);
+    });
+    for (const t of ['today', 'week', 'settings']) {
+      document.getElementById('tab-' + t).hidden = (t !== name);
+    }
+  }
+  window.switchTab = switchTab;
+  document.querySelectorAll('.tabs button').forEach(b => {
+    b.addEventListener('click', () => switchTab(b.dataset.tab));
+  });
+
+  function renderAll() { renderToday(); renderWeek(); renderSettings(); }
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, c => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    }[c]));
+  }
+
+  function tickClock() {
+    const n = new Date();
+    const pad = x => String(x).padStart(2, '0');
+    document.getElementById('clock').textContent =
+      `${DAY_NAMES[n.getDay()]} ${pad(n.getHours())}:${pad(n.getMinutes())}`;
+  }
+
+  renderAll();
+  tickClock();
+  setInterval(() => { tickClock(); renderToday(); }, 30000);
+</script>
+</body>
+</html>
