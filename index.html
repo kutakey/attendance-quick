@@ -116,7 +116,7 @@
   }
 
   .grid {
-    display: grid; grid-template-columns: 40px repeat(5, 1fr);
+    display: grid;
     gap: 4px;
   }
   .grid .head {
@@ -277,7 +277,7 @@
 
   function loadState() {
     let migrated = false;
-    const result = { periods: [...DEFAULT_PERIODS], classes: [] };
+    const result = { periods: [...DEFAULT_PERIODS], classes: [], showSaturday: false };
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
       if (raw) {
@@ -285,6 +285,7 @@
         if (Array.isArray(s.periods) && s.periods.length === 10) result.periods = s.periods;
         else if (Array.isArray(s.periods)) migrated = true;
         if (Array.isArray(s.classes)) result.classes = s.classes;
+        if (typeof s.showSaturday === 'boolean') result.showSaturday = s.showSaturday;
       }
     } catch {}
     if (migrated) localStorage.setItem(STORAGE_KEY, JSON.stringify(result));
@@ -298,34 +299,57 @@
   function nowMin(d = new Date()) { return d.getHours() * 60 + d.getMinutes(); }
   function periodById(id) { return state.periods.find(p => p.id === id); }
 
-  function findCurrentClass(date = new Date()) {
-    const day = date.getDay();
-    const min = nowMin(date);
-    for (const c of state.classes) {
-      if (c.day !== day) continue;
-      const p = periodById(c.period);
-      if (!p) continue;
-      if (min >= timeToMin(p.start) && min < timeToMin(p.end)) return { ...c, period: p };
-    }
-    return null;
-  }
-  function findNextClass(date = new Date()) {
-    const day = date.getDay();
-    const min = nowMin(date);
-    const today = state.classes
-      .filter(c => c.day === day)
-      .map(c => ({ ...c, _p: periodById(c.period) }))
-      .filter(c => c._p && timeToMin(c._p.start) > min)
-      .sort((a, b) => timeToMin(a._p.start) - timeToMin(b._p.start));
-    return today[0] || null;
-  }
-  function todayClassesSorted(date = new Date()) {
-    const day = date.getDay();
+  function dayClassesSorted(day) {
     return state.classes
       .filter(c => c.day === day)
       .map(c => ({ ...c, _p: periodById(c.period) }))
       .filter(c => c._p)
       .sort((a, b) => timeToMin(a._p.start) - timeToMin(b._p.start));
+  }
+  function mergeConsecutive(list) {
+    const merged = [];
+    for (const c of list) {
+      const last = merged[merged.length - 1];
+      if (
+        last &&
+        last.name === c.name &&
+        last.room === c.room &&
+        last._endP.id + 1 === c._p.id &&
+        timeToMin(last._endP.end) === timeToMin(c._p.start)
+      ) {
+        last._endP = c._p;
+        last.endPeriod = c.period;
+        last.periodSpan += 1;
+        last.ids.push(c.id);
+        continue;
+      }
+      merged.push({
+        ...c,
+        startPeriod: c.period,
+        endPeriod: c.period,
+        _startP: c._p,
+        _endP: c._p,
+        periodSpan: 1,
+        ids: [c.id],
+      });
+    }
+    return merged;
+  }
+  function todayMergedSorted(date = new Date()) {
+    return mergeConsecutive(dayClassesSorted(date.getDay()));
+  }
+  function findCurrentMerged(date = new Date()) {
+    const min = nowMin(date);
+    return todayMergedSorted(date).find(m =>
+      min >= timeToMin(m._startP.start) && min < timeToMin(m._endP.end)
+    ) || null;
+  }
+  function findNextMerged(date = new Date()) {
+    const min = nowMin(date);
+    return todayMergedSorted(date).find(m => timeToMin(m._startP.start) > min) || null;
+  }
+  function periodLabel(m) {
+    return m.startPeriod === m.endPeriod ? `${m.startPeriod}限` : `${m.startPeriod}-${m.endPeriod}限`;
   }
 
   function attendanceLink(room) {
@@ -337,9 +361,9 @@
   // ====== Rendering ======
   function renderToday() {
     const root = document.getElementById('tab-today');
-    const current = findCurrentClass();
-    const next = findNextClass();
-    const today = todayClassesSorted();
+    const current = findCurrentMerged();
+    const next = findNextMerged();
+    const today = todayMergedSorted();
     const now = new Date();
     const nowM = nowMin(now);
 
@@ -353,7 +377,7 @@
         <div class="card now-card">
           <div class="now-label">今の講義</div>
           <h2 class="now-title">${escapeHtml(current.name)}</h2>
-          <div class="now-meta">${current.period.id}限 ${current.period.start}〜${current.period.end} ・ 教室 ${escapeHtml(current.room || '未設定')}</div>
+          <div class="now-meta">${periodLabel(current)} ${current._startP.start}〜${current._endP.end} ・ 教室 ${escapeHtml(current.room || '未設定')}</div>
           ${btn}
         </div>`;
     } else if (next) {
@@ -364,7 +388,7 @@
         <div class="card now-card" style="background:linear-gradient(135deg,#475569,#334155);">
           <div class="now-label">次の講義</div>
           <h2 class="now-title">${escapeHtml(next.name)}</h2>
-          <div class="now-meta">${next._p.id}限 ${next._p.start}〜${next._p.end} ・ 教室 ${escapeHtml(next.room || '未設定')}</div>
+          <div class="now-meta">${periodLabel(next)} ${next._startP.start}〜${next._endP.end} ・ 教室 ${escapeHtml(next.room || '未設定')}</div>
           ${btn}
         </div>`;
     } else {
@@ -375,21 +399,25 @@
     if (today.length === 0) {
       html += `<div class="card"><div class="empty">登録された講義はありません<br><br><a href="#" onclick="switchTab('settings');return false;">設定から追加</a></div></div>`;
     } else {
-      html += today.map(c => {
-        const pm = timeToMin(c._p.start);
-        const em = timeToMin(c._p.end);
+      html += today.map(m => {
+        const pm = timeToMin(m._startP.start);
+        const em = timeToMin(m._endP.end);
         let cls = 'list-item';
         if (em <= nowM) cls += ' past';
         else if (pm <= nowM && em > nowM) cls += ' current';
-        const link = c.room
-          ? `<a class="list-link" href="${attendanceLink(c.room)}" target="_blank" rel="noopener">開く</a>`
+        const link = m.room
+          ? `<a class="list-link" href="${attendanceLink(m.room)}" target="_blank" rel="noopener">開く</a>`
           : `<span class="list-link" style="background:var(--panel-2);color:var(--muted);">未設定</span>`;
+        const badge = m.startPeriod === m.endPeriod
+          ? `${m.startPeriod}`
+          : `${m.startPeriod}-${m.endPeriod}`;
+        const badgeStyle = m.periodSpan > 1 ? 'style="font-size:14px;"' : '';
         return `
           <div class="${cls}">
-            <div class="list-period">${c._p.id}</div>
+            <div class="list-period" ${badgeStyle}>${badge}</div>
             <div class="list-main">
-              <div class="list-name">${escapeHtml(c.name)}</div>
-              <div class="list-sub">${c._p.start}〜${c._p.end} ・ ${escapeHtml(c.room || '教室未設定')}</div>
+              <div class="list-name">${escapeHtml(m.name)}</div>
+              <div class="list-sub">${m._startP.start}〜${m._endP.end} ・ ${escapeHtml(m.room || '教室未設定')}</div>
             </div>
             ${link}
           </div>`;
@@ -400,26 +428,50 @@
 
   function renderWeek() {
     const root = document.getElementById('tab-week');
-    const days = [1, 2, 3, 4, 5];
+    const days = state.showSaturday ? [1, 2, 3, 4, 5, 6] : [1, 2, 3, 4, 5];
     const periods = state.periods;
 
-    let html = '<div class="grid">';
-    html += '<div class="head"></div>';
-    html += days.map(d => `<div class="head">${DAY_NAMES[d]}</div>`).join('');
-    for (const p of periods) {
-      html += `<div class="head">${p.id}</div>`;
-      for (const d of days) {
-        const c = state.classes.find(x => x.day === d && x.period === p.id);
-        if (c) {
-          html += `<button class="cell filled" data-edit="${c.id}">
-            <div class="cell-name">${escapeHtml(c.name)}</div>
-            <div class="cell-room">${escapeHtml(c.room)}</div>
-          </button>`;
-        } else {
-          html += `<button class="cell empty-cell" data-add-day="${d}" data-add-period="${p.id}">+</button>`;
-        }
+    const dayMerged = {};
+    for (const d of days) dayMerged[d] = mergeConsecutive(dayClassesSorted(d));
+
+    const periodIndex = {};
+    periods.forEach((p, i) => { periodIndex[p.id] = i; });
+
+    const gridStyle = `grid-template-columns: 40px repeat(${days.length}, 1fr);`;
+    let html = `<div class="grid" style="${gridStyle}">`;
+    html += `<div class="head" style="grid-row:1;grid-column:1;"></div>`;
+    days.forEach((d, di) => {
+      html += `<div class="head" style="grid-row:1;grid-column:${di + 2};">${DAY_NAMES[d]}</div>`;
+    });
+    periods.forEach((p, pi) => {
+      html += `<div class="head" style="grid-row:${pi + 2};grid-column:1;">${p.id}</div>`;
+    });
+
+    for (const d of days) {
+      const di = days.indexOf(d);
+      const col = di + 2;
+      const covered = new Set();
+      for (const m of dayMerged[d]) {
+        const startIdx = periodIndex[m.startPeriod];
+        if (startIdx == null) continue;
+        const row = startIdx + 2;
+        const label = m.startPeriod === m.endPeriod
+          ? `${m.startPeriod}限`
+          : `${m.startPeriod}-${m.endPeriod}限`;
+        html += `<button class="cell filled" data-edit="${m.id}" style="grid-row:${row} / span ${m.periodSpan};grid-column:${col};">
+          <div class="cell-name">${escapeHtml(m.name)}</div>
+          <div class="cell-room">${escapeHtml(m.room)}</div>
+          ${m.periodSpan > 1 ? `<div class="cell-room" style="opacity:0.7;">${label}</div>` : ''}
+        </button>`;
+        for (let pid = m.startPeriod; pid <= m.endPeriod; pid++) covered.add(pid);
       }
+      periods.forEach((p, pi) => {
+        if (covered.has(p.id)) return;
+        const row = pi + 2;
+        html += `<button class="cell empty-cell" data-add-day="${d}" data-add-period="${p.id}" style="grid-row:${row};grid-column:${col};">+</button>`;
+      });
     }
+
     html += '</div>';
     html += `<div class="footer-note">セルをタップして講義を追加/編集</div>`;
     root.innerHTML = html;
@@ -462,7 +514,16 @@
       }).join('');
     }
 
-    html += `<div class="section-title">時限の時間設定</div><div class="card" id="periods-card"></div>`;
+    html += `<div class="section-title">表示設定</div>
+      <div class="card">
+        <label style="display:flex;align-items:center;justify-content:space-between;gap:12px;cursor:pointer;margin:0;">
+          <span style="color:var(--text);font-size:15px;">土曜授業を表示</span>
+          <input type="checkbox" id="toggle-saturday" ${state.showSaturday ? 'checked' : ''} style="width:auto;transform:scale(1.3);">
+        </label>
+        <div style="font-size:12px;color:var(--muted);margin-top:6px;">
+          教職科目など土曜開講の授業がある場合に有効化してください。
+        </div>
+      </div>`;
     html += `<div class="section-title">データ</div>
       <div class="card">
         <div class="btn-row">
@@ -476,22 +537,10 @@
 
     root.innerHTML = html;
 
-    // Periods editor
-    const pCard = document.getElementById('periods-card');
-    pCard.innerHTML = state.periods.map((p, i) => `
-      <div class="period-row">
-        <span>${p.id}限</span>
-        <input type="time" data-period-idx="${i}" data-field="start" value="${p.start}">
-        <input type="time" data-period-idx="${i}" data-field="end" value="${p.end}">
-      </div>
-    `).join('');
-    pCard.querySelectorAll('input[type=time]').forEach(inp => {
-      inp.addEventListener('change', () => {
-        const i = Number(inp.dataset.periodIdx);
-        state.periods[i][inp.dataset.field] = inp.value;
-        saveState();
-        renderAll();
-      });
+    document.getElementById('toggle-saturday').addEventListener('change', (e) => {
+      state.showSaturday = e.target.checked;
+      saveState();
+      renderAll();
     });
 
     document.getElementById('add-class-btn').addEventListener('click', () => openClassDialog(null));
@@ -785,6 +834,7 @@
     if (!source.length) return;
     if (!confirm(`${term === 'front' ? '前期' : '後期'} ${source.length}件をインポートし、現在の時間割を置き換えます。よろしいですか？`)) return;
     state.classes = source.map(c => ({ id: uid(), name: c.name, day: c.day, period: c.period, room: c.room }));
+    if (source.some(c => c.day === 6)) state.showSaturday = true;
     saveState();
     importDialog.close();
     renderAll();
