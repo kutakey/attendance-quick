@@ -610,6 +610,12 @@
     }
     dialog.showModal();
   }
+  function findMergeSiblingIds(c) {
+    const merged = mergeConsecutive(dayClassesSorted(c.day));
+    const group = merged.find(m => m.ids.includes(c.id));
+    return group ? group.ids : [c.id];
+  }
+
   dialogForm.addEventListener('submit', e => {
     e.preventDefault();
     const fd = new FormData(dialogForm);
@@ -621,8 +627,21 @@
     };
     if (!payload.name) return;
     if (editingId) {
-      const i = state.classes.findIndex(c => c.id === editingId);
-      if (i >= 0) state.classes[i] = { ...state.classes[i], ...payload };
+      const idx = state.classes.findIndex(c => c.id === editingId);
+      if (idx < 0) return;
+      const original = state.classes[idx];
+      const siblingIds = findMergeSiblingIds(original);
+      const moved = original.day !== payload.day || original.period !== payload.period;
+      if (siblingIds.length > 1 && !moved) {
+        for (const sid of siblingIds) {
+          const si = state.classes.findIndex(c => c.id === sid);
+          if (si >= 0) {
+            state.classes[si] = { ...state.classes[si], name: payload.name, room: payload.room };
+          }
+        }
+      } else {
+        state.classes[idx] = { ...original, ...payload };
+      }
     } else {
       state.classes.push({ id: uid(), ...payload });
     }
@@ -633,8 +652,15 @@
   document.getElementById('dialog-cancel').addEventListener('click', () => dialog.close());
   dialogDelete.addEventListener('click', () => {
     if (!editingId) return;
-    if (!confirm('この講義を削除しますか？')) return;
-    state.classes = state.classes.filter(c => c.id !== editingId);
+    const target = state.classes.find(c => c.id === editingId);
+    if (!target) return;
+    const siblingIds = findMergeSiblingIds(target);
+    const msg = siblingIds.length > 1
+      ? `連続する${siblingIds.length}時限分をまとめて削除しますか？`
+      : 'この講義を削除しますか？';
+    if (!confirm(msg)) return;
+    const toDelete = new Set(siblingIds);
+    state.classes = state.classes.filter(c => !toDelete.has(c.id));
     saveState();
     dialog.close();
     renderAll();
