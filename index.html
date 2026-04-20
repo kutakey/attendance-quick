@@ -243,10 +243,13 @@
           <option value="0">日</option>
         </select>
       </label>
-      <label>時限
-        <select name="period" required></select>
+      <label>開始時限
+        <select name="startPeriod" required></select>
       </label>
     </div>
+    <label>終了時限（連続コマの場合のみ変更）
+      <select name="endPeriod" required></select>
+    </label>
     <label>教室番号（空欄可 ／ 3桁=津田沼・4桁=新習志野）
       <input type="text" name="room" inputmode="numeric" pattern="\d{3,4}" maxlength="4" placeholder="例: 5202"
         title="3桁または4桁の半角数字で入力してください">
@@ -620,25 +623,48 @@
     updateRoomHint();
   });
 
+  function populatePeriodOptions() {
+    const opts = state.periods.map(p => `<option value="${p.id}">${p.id}限 (${p.start}〜${p.end})</option>`).join('');
+    dialogForm.startPeriod.innerHTML = opts;
+    dialogForm.endPeriod.innerHTML = opts;
+  }
+  dialogForm.startPeriod && dialogForm.startPeriod.addEventListener('change', () => {
+    if (Number(dialogForm.endPeriod.value) < Number(dialogForm.startPeriod.value)) {
+      dialogForm.endPeriod.value = dialogForm.startPeriod.value;
+    }
+  });
+  dialogForm.endPeriod && dialogForm.endPeriod.addEventListener('change', () => {
+    if (Number(dialogForm.endPeriod.value) < Number(dialogForm.startPeriod.value)) {
+      dialogForm.endPeriod.value = dialogForm.startPeriod.value;
+    }
+  });
+
   function openClassDialog(id, defaults = {}) {
     editingId = id;
-    // populate period options
-    const periodSel = dialogForm.period;
-    periodSel.innerHTML = state.periods.map(p => `<option value="${p.id}">${p.id}限 (${p.start}〜${p.end})</option>`).join('');
+    populatePeriodOptions();
     if (id) {
       const c = state.classes.find(x => x.id === id);
       if (!c) return;
+      const siblings = findMergeSiblingIds(c)
+        .map(sid => state.classes.find(x => x.id === sid))
+        .filter(Boolean)
+        .sort((a, b) => a.period - b.period);
+      const startP = siblings[0]?.period ?? c.period;
+      const endP = siblings[siblings.length - 1]?.period ?? c.period;
       dialogTitle.textContent = '講義を編集';
       dialogForm.name.value = c.name;
       dialogForm.day.value = String(c.day);
-      dialogForm.period.value = String(c.period);
+      dialogForm.startPeriod.value = String(startP);
+      dialogForm.endPeriod.value = String(endP);
       dialogForm.room.value = normalizeRoom(c.room);
       dialogDelete.hidden = false;
     } else {
       dialogTitle.textContent = '講義を追加';
       dialogForm.reset();
+      const defaultPeriod = defaults.period != null ? String(defaults.period) : (state.periods[0]?.id ? String(state.periods[0].id) : '1');
       if (defaults.day != null) dialogForm.day.value = String(defaults.day);
-      if (defaults.period != null) dialogForm.period.value = String(defaults.period);
+      dialogForm.startPeriod.value = defaultPeriod;
+      dialogForm.endPeriod.value = defaultPeriod;
       dialogDelete.hidden = true;
     }
     updateRoomHint();
@@ -658,31 +684,37 @@
       alert('教室番号は3桁または4桁の半角数字で入力してください');
       return;
     }
-    const payload = {
-      name: fd.get('name').trim(),
-      day: Number(fd.get('day')),
-      period: Number(fd.get('period')),
-      room,
-    };
-    if (!payload.name) return;
+    const name = fd.get('name').trim();
+    if (!name) return;
+    const day = Number(fd.get('day'));
+    let startP = Number(fd.get('startPeriod'));
+    let endP = Number(fd.get('endPeriod'));
+    if (endP < startP) endP = startP;
+
+    const periodIds = state.periods.map(p => p.id);
+    const targetPeriods = periodIds.filter(id => id >= startP && id <= endP);
+    if (!targetPeriods.length) return;
+
+    const editingIdSet = new Set();
     if (editingId) {
-      const idx = state.classes.findIndex(c => c.id === editingId);
-      if (idx < 0) return;
-      const original = state.classes[idx];
-      const siblingIds = findMergeSiblingIds(original);
-      const moved = original.day !== payload.day || original.period !== payload.period;
-      if (siblingIds.length > 1 && !moved) {
-        for (const sid of siblingIds) {
-          const si = state.classes.findIndex(c => c.id === sid);
-          if (si >= 0) {
-            state.classes[si] = { ...state.classes[si], name: payload.name, room: payload.room };
-          }
-        }
-      } else {
-        state.classes[idx] = { ...original, ...payload };
-      }
-    } else {
-      state.classes.push({ id: uid(), ...payload });
+      const original = state.classes.find(c => c.id === editingId);
+      if (original) findMergeSiblingIds(original).forEach(id => editingIdSet.add(id));
+    }
+    const conflicts = [];
+    for (const p of targetPeriods) {
+      const occ = state.classes.find(c => c.day === day && c.period === p && !editingIdSet.has(c.id));
+      if (occ) conflicts.push(p);
+    }
+    if (conflicts.length) {
+      alert(`${conflicts.join(', ')}限は既に他の講義で使用されています`);
+      return;
+    }
+
+    if (editingIdSet.size) {
+      state.classes = state.classes.filter(c => !editingIdSet.has(c.id));
+    }
+    for (const p of targetPeriods) {
+      state.classes.push({ id: uid(), name, day, period: p, room });
     }
     saveState();
     dialog.close();
