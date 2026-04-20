@@ -125,7 +125,7 @@
   }
   .grid .cell {
     background: var(--panel); border-radius: 8px;
-    padding: 8px 4px; min-height: 64px;
+    padding: 6px 3px; min-height: 52px;
     font-size: 11px; text-align: center;
     display: flex; flex-direction: column; align-items: center; justify-content: center;
     color: var(--text); border: none; cursor: pointer;
@@ -191,6 +191,40 @@
   <section id="tab-settings" hidden></section>
 </main>
 
+<dialog id="import-dialog">
+  <h2>Excelからインポート</h2>
+  <div id="import-body">
+    <p style="color:var(--muted);font-size:13px;margin:0 0 12px;">
+      千葉工大の学生時間割表（.xlsx）を読み込みます。
+    </p>
+    <input type="file" id="import-file" accept=".xlsx" style="margin-bottom:12px;">
+    <div id="import-result" hidden>
+      <div class="card" style="background:var(--panel-2);margin-bottom:12px;">
+        <div style="display:flex;justify-content:space-between;padding:6px 0;">
+          <span>前期</span><span id="front-count">—</span>
+        </div>
+        <div style="display:flex;justify-content:space-between;padding:6px 0;border-top:1px solid rgba(255,255,255,0.1);">
+          <span>後期</span><span id="back-count">—</span>
+        </div>
+      </div>
+      <label style="display:flex;gap:8px;align-items:center;margin-bottom:8px;cursor:pointer;">
+        <input type="radio" name="term" value="front" checked> 前期をインポート
+      </label>
+      <label style="display:flex;gap:8px;align-items:center;margin-bottom:8px;cursor:pointer;">
+        <input type="radio" name="term" value="back"> 後期をインポート
+      </label>
+      <div style="font-size:12px;color:var(--warn);margin:4px 0 12px;">
+        ⚠ 既存の時間割は置き換えられます
+      </div>
+    </div>
+    <div id="import-error" style="color:var(--danger);font-size:13px;margin-bottom:8px;" hidden></div>
+  </div>
+  <div class="btn-row">
+    <button type="button" class="btn secondary" id="import-cancel">閉じる</button>
+    <button type="button" class="btn" id="import-confirm" disabled>インポート</button>
+  </div>
+</dialog>
+
 <dialog id="class-dialog">
   <h2 id="dialog-title">講義を追加</h2>
   <form id="class-form">
@@ -213,8 +247,8 @@
         <select name="period" required></select>
       </label>
     </div>
-    <label>教室番号
-      <input type="text" name="room" required maxlength="30" placeholder="例: 12345">
+    <label>教室番号（空欄可）
+      <input type="text" name="room" maxlength="30" placeholder="例: 5202">
     </label>
     <div class="btn-row" style="margin-top:8px;">
       <button type="button" class="btn secondary" id="dialog-cancel">キャンセル</button>
@@ -229,25 +263,32 @@
   const STORAGE_KEY = 'attendance-app-v1';
   const DAY_NAMES = ['日', '月', '火', '水', '木', '金', '土'];
   const DEFAULT_PERIODS = [
-    { id: 1, start: '09:00', end: '10:30' },
-    { id: 2, start: '10:40', end: '12:10' },
-    { id: 3, start: '13:00', end: '14:30' },
-    { id: 4, start: '14:40', end: '16:10' },
-    { id: 5, start: '16:20', end: '17:50' },
+    { id: 1, start: '09:00', end: '10:00' },
+    { id: 2, start: '10:00', end: '11:00' },
+    { id: 3, start: '11:00', end: '12:00' },
+    { id: 4, start: '12:00', end: '13:00' },
+    { id: 5, start: '13:00', end: '14:00' },
+    { id: 6, start: '14:00', end: '15:00' },
+    { id: 7, start: '15:00', end: '16:00' },
+    { id: 8, start: '16:00', end: '17:00' },
+    { id: 9, start: '17:00', end: '18:00' },
+    { id: 10, start: '18:00', end: '19:00' },
   ];
 
   function loadState() {
+    let migrated = false;
+    const result = { periods: [...DEFAULT_PERIODS], classes: [] };
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
       if (raw) {
         const s = JSON.parse(raw);
-        return {
-          periods: Array.isArray(s.periods) && s.periods.length ? s.periods : [...DEFAULT_PERIODS],
-          classes: Array.isArray(s.classes) ? s.classes : [],
-        };
+        if (Array.isArray(s.periods) && s.periods.length === 10) result.periods = s.periods;
+        else if (Array.isArray(s.periods)) migrated = true;
+        if (Array.isArray(s.classes)) result.classes = s.classes;
       }
     } catch {}
-    return { periods: [...DEFAULT_PERIODS], classes: [] };
+    if (migrated) localStorage.setItem(STORAGE_KEY, JSON.stringify(result));
+    return result;
   }
   function saveState() { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }
   let state = loadState();
@@ -264,7 +305,7 @@
       if (c.day !== day) continue;
       const p = periodById(c.period);
       if (!p) continue;
-      if (min >= timeToMin(p.start) && min <= timeToMin(p.end)) return { ...c, period: p };
+      if (min >= timeToMin(p.start) && min < timeToMin(p.end)) return { ...c, period: p };
     }
     return null;
   }
@@ -305,20 +346,26 @@
     let html = '';
 
     if (current) {
+      const btn = current.room
+        ? `<a class="big-btn" href="${attendanceLink(current.room)}" target="_blank" rel="noopener">出席サイトを開く →</a>`
+        : `<div class="big-btn" style="background:#e5e7eb;color:#6b7280;cursor:not-allowed;">教室番号が未設定です</div>`;
       html += `
         <div class="card now-card">
           <div class="now-label">今の講義</div>
           <h2 class="now-title">${escapeHtml(current.name)}</h2>
-          <div class="now-meta">${current.period.id}限 ${current.period.start}〜${current.period.end} ・ 教室 ${escapeHtml(current.room)}</div>
-          <a class="big-btn" href="${attendanceLink(current.room)}" target="_blank" rel="noopener">出席サイトを開く →</a>
+          <div class="now-meta">${current.period.id}限 ${current.period.start}〜${current.period.end} ・ 教室 ${escapeHtml(current.room || '未設定')}</div>
+          ${btn}
         </div>`;
     } else if (next) {
+      const btn = next.room
+        ? `<a class="big-btn" href="${attendanceLink(next.room)}" target="_blank" rel="noopener">出席サイトを開く →</a>`
+        : `<div class="big-btn" style="background:#e5e7eb;color:#6b7280;cursor:not-allowed;">教室番号が未設定です</div>`;
       html += `
         <div class="card now-card" style="background:linear-gradient(135deg,#475569,#334155);">
           <div class="now-label">次の講義</div>
           <h2 class="now-title">${escapeHtml(next.name)}</h2>
-          <div class="now-meta">${next._p.id}限 ${next._p.start}〜${next._p.end} ・ 教室 ${escapeHtml(next.room)}</div>
-          <a class="big-btn" href="${attendanceLink(next.room)}" target="_blank" rel="noopener">出席サイトを開く →</a>
+          <div class="now-meta">${next._p.id}限 ${next._p.start}〜${next._p.end} ・ 教室 ${escapeHtml(next.room || '未設定')}</div>
+          ${btn}
         </div>`;
     } else {
       html += `<div class="card"><div class="empty">${today.length ? '本日の講義は終了しました' : '今日は講義がありません'}</div></div>`;
@@ -332,16 +379,19 @@
         const pm = timeToMin(c._p.start);
         const em = timeToMin(c._p.end);
         let cls = 'list-item';
-        if (em < nowM) cls += ' past';
-        else if (pm <= nowM && em >= nowM) cls += ' current';
+        if (em <= nowM) cls += ' past';
+        else if (pm <= nowM && em > nowM) cls += ' current';
+        const link = c.room
+          ? `<a class="list-link" href="${attendanceLink(c.room)}" target="_blank" rel="noopener">開く</a>`
+          : `<span class="list-link" style="background:var(--panel-2);color:var(--muted);">未設定</span>`;
         return `
           <div class="${cls}">
             <div class="list-period">${c._p.id}</div>
             <div class="list-main">
               <div class="list-name">${escapeHtml(c.name)}</div>
-              <div class="list-sub">${c._p.start}〜${c._p.end} ・ ${escapeHtml(c.room)}</div>
+              <div class="list-sub">${c._p.start}〜${c._p.end} ・ ${escapeHtml(c.room || '教室未設定')}</div>
             </div>
-            <a class="list-link" href="${attendanceLink(c.room)}" target="_blank" rel="noopener">開く</a>
+            ${link}
           </div>`;
       }).join('');
     }
@@ -390,6 +440,8 @@
       <div class="section-title">講義の追加</div>
       <div class="card">
         <button class="btn" id="add-class-btn">＋ 新しい講義を追加</button>
+        <div style="height:8px"></div>
+        <button class="btn secondary" id="import-xlsx-btn">📄 Excelからインポート</button>
       </div>
       <div class="section-title">登録済み講義（${state.classes.length}）</div>`;
 
@@ -443,6 +495,7 @@
     });
 
     document.getElementById('add-class-btn').addEventListener('click', () => openClassDialog(null));
+    document.getElementById('import-xlsx-btn').addEventListener('click', openImportDialog);
     root.querySelectorAll('[data-edit]').forEach(el => {
       el.addEventListener('click', () => openClassDialog(el.dataset.edit));
     });
@@ -517,7 +570,7 @@
       period: Number(fd.get('period')),
       room: fd.get('room').trim(),
     };
-    if (!payload.name || !payload.room) return;
+    if (!payload.name) return;
     if (editingId) {
       const i = state.classes.findIndex(c => c.id === editingId);
       if (i >= 0) state.classes[i] = { ...state.classes[i], ...payload };
@@ -566,6 +619,177 @@
     document.getElementById('clock').textContent =
       `${DAY_NAMES[n.getDay()]} ${pad(n.getHours())}:${pad(n.getMinutes())}`;
   }
+
+  // ====== XLSX Import ======
+  const SHEETJS_URL = 'https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.mini.min.js';
+  let sheetJSLoader = null;
+  function loadSheetJS() {
+    if (window.XLSX) return Promise.resolve();
+    if (sheetJSLoader) return sheetJSLoader;
+    sheetJSLoader = new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = SHEETJS_URL;
+      s.onload = resolve;
+      s.onerror = () => reject(new Error('SheetJSの読み込みに失敗しました'));
+      document.head.appendChild(s);
+    });
+    return sheetJSLoader;
+  }
+
+  function zenToHanDigits(s) {
+    return String(s).replace(/[０-９]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0));
+  }
+
+  function parseClassBlock(lines) {
+    const ROOM_TYPE_RE = /(講義室|演習室|実験室|教室|製図室|研究室|実習室)/;
+    const ROOM_NUM_RE = /([０-９0-9]{3,5})(?=講義室|演習室|実験室|教室|製図室|研究室|実習室)/;
+    const CAMPUS_RE = /キャンパ/;
+    let roomIdx = -1, campusIdx = -1;
+    for (let i = 0; i < lines.length; i++) {
+      if (roomIdx < 0 && ROOM_TYPE_RE.test(lines[i])) roomIdx = i;
+      if (campusIdx < 0 && CAMPUS_RE.test(lines[i])) campusIdx = i;
+    }
+    let metaStart = lines.length;
+    if (roomIdx >= 0) metaStart = Math.min(metaStart, roomIdx);
+    if (campusIdx >= 0) metaStart = Math.min(metaStart, campusIdx);
+    if (metaStart < 2) return null;
+
+    let room = '';
+    if (roomIdx >= 0) {
+      const m = lines[roomIdx].match(ROOM_NUM_RE);
+      if (m) room = zenToHanDigits(m[1]);
+    }
+    const teacher = lines[metaStart - 1].trim();
+    const nameSlice = lines.slice(0, metaStart - 1);
+    const nameJoined = nameSlice.join('');
+    const firstSpace = nameJoined.search(/[\s　]/);
+    const name = (firstSpace >= 0 ? nameJoined.slice(0, firstSpace) : nameJoined).trim();
+    if (!name) return null;
+    return { name, teacher, room };
+  }
+
+  function parseTimetableSheet(ws) {
+    const DAY_COLS = [
+      { col: 'O',  day: 1 },
+      { col: 'AJ', day: 2 },
+      { col: 'BE', day: 3 },
+      { col: 'BZ', day: 4 },
+      { col: 'CU', day: 5 },
+      { col: 'DP', day: 6 },
+    ];
+    const periodRows = [];
+    for (let r = 1; r <= 60; r++) {
+      const cell = ws['I' + r];
+      if (!cell || cell.v == null) continue;
+      const s = String(cell.v).trim();
+      if (/^\d+$/.test(s)) {
+        const p = parseInt(s, 10);
+        if (p >= 1 && p <= 10) periodRows.push({ period: p, row: r });
+      }
+    }
+    periodRows.sort((a, b) => a.row - b.row);
+
+    const classes = [];
+    for (let i = 0; i < periodRows.length; i++) {
+      const { period, row: startRow } = periodRows[i];
+      const endRow = (i + 1 < periodRows.length) ? periodRows[i + 1].row - 1 : startRow + 10;
+      for (const { col, day } of DAY_COLS) {
+        const lines = [];
+        for (let r = startRow; r <= endRow; r++) {
+          const cell = ws[col + r];
+          if (!cell || cell.v == null) continue;
+          const s = String(cell.v);
+          if (s.trim()) lines.push(s);
+        }
+        if (!lines.length) continue;
+        const parsed = parseClassBlock(lines);
+        if (parsed) classes.push({ ...parsed, day, period });
+      }
+    }
+    return classes;
+  }
+
+  function dedupeClasses(list) {
+    const seen = new Map();
+    for (const c of list) {
+      const key = `${c.day}-${c.period}`;
+      if (!seen.has(key)) seen.set(key, c);
+    }
+    return Array.from(seen.values());
+  }
+
+  async function parseXlsxFile(file) {
+    await loadSheetJS();
+    const buf = await file.arrayBuffer();
+    const wb = XLSX.read(buf, { type: 'array' });
+    const termClasses = { front: [], back: [] };
+    for (const name of wb.SheetNames) {
+      const ws = wb.Sheets[name];
+      const termCell = ws['I6'];
+      const termStr = termCell && termCell.v != null ? String(termCell.v) : '';
+      const bucket = termStr.includes('後期') ? 'back' : termStr.includes('前期') ? 'front' : null;
+      if (!bucket) continue;
+      termClasses[bucket].push(...parseTimetableSheet(ws));
+    }
+    return {
+      front: dedupeClasses(termClasses.front),
+      back: dedupeClasses(termClasses.back),
+    };
+  }
+
+  const importDialog = document.getElementById('import-dialog');
+  const importFile = document.getElementById('import-file');
+  const importResult = document.getElementById('import-result');
+  const importError = document.getElementById('import-error');
+  const importConfirm = document.getElementById('import-confirm');
+  let importParsed = null;
+
+  function openImportDialog() {
+    importParsed = null;
+    importFile.value = '';
+    importResult.hidden = true;
+    importError.hidden = true;
+    importError.textContent = '';
+    importConfirm.disabled = true;
+    importDialog.showModal();
+  }
+
+  importFile.addEventListener('change', async () => {
+    const f = importFile.files[0];
+    if (!f) return;
+    importError.hidden = true;
+    importResult.hidden = true;
+    importConfirm.disabled = true;
+    try {
+      const parsed = await parseXlsxFile(f);
+      importParsed = parsed;
+      document.getElementById('front-count').textContent = parsed.front.length + ' 件';
+      document.getElementById('back-count').textContent = parsed.back.length + ' 件';
+      importResult.hidden = false;
+      importConfirm.disabled = (parsed.front.length + parsed.back.length) === 0;
+      if (importConfirm.disabled) {
+        importError.textContent = '講義を認識できませんでした。ファイル形式をご確認ください。';
+        importError.hidden = false;
+      }
+    } catch (e) {
+      importError.textContent = '読み込みエラー: ' + (e.message || e);
+      importError.hidden = false;
+    }
+  });
+
+  document.getElementById('import-cancel').addEventListener('click', () => importDialog.close());
+  importConfirm.addEventListener('click', () => {
+    if (!importParsed) return;
+    const term = document.querySelector('input[name=term]:checked').value;
+    const source = importParsed[term] || [];
+    if (!source.length) return;
+    if (!confirm(`${term === 'front' ? '前期' : '後期'} ${source.length}件をインポートし、現在の時間割を置き換えます。よろしいですか？`)) return;
+    state.classes = source.map(c => ({ id: uid(), name: c.name, day: c.day, period: c.period, room: c.room }));
+    saveState();
+    importDialog.close();
+    renderAll();
+    switchTab('week');
+  });
 
   renderAll();
   tickClock();
