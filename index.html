@@ -225,6 +225,17 @@
   </div>
 </dialog>
 
+<dialog id="issues-dialog">
+  <h2>取込時の警告</h2>
+  <p style="color:var(--muted);font-size:13px;margin:0 0 10px;">
+    以下の講義は自動認識できませんでした。設定画面から手動で追加・修正してください。
+  </p>
+  <div id="issues-list" style="max-height:55vh;overflow-y:auto;margin-bottom:12px;"></div>
+  <div class="btn-row">
+    <button type="button" class="btn" id="issues-close">閉じる</button>
+  </div>
+</dialog>
+
 <dialog id="class-dialog">
   <h2 id="dialog-title">講義を追加</h2>
   <form id="class-form">
@@ -822,9 +833,11 @@
   }
 
   function parseClassBlock(lines) {
-    const ROOM_TYPE_RE = /(講義室|演習室|実験室|教室|製図室|研究室|実習室)/;
-    const ROOM_NUM_RE = /([０-９0-9]{3,4})(?=講義室|演習室|実験室|教室|製図室|研究室|実習室)/;
+    const ROOM_TYPE_RE = /(講義室|演習室|実験室|教室|製図室|研究室|実習室|図工室)/;
+    const ROOM_NUM_RE = /([０-９0-9]{3,4})(?=講義室|演習室|実験室|教室|製図室|研究室|実習室|図工室)/;
     const CAMPUS_RE = /キャンパ/;
+    const BUILDING_RE = /号館|学舎|棟|各科|階/;
+    const rawJoined = lines.join(' / ');
     let roomIdx = -1, campusIdx = -1;
     for (let i = 0; i < lines.length; i++) {
       if (roomIdx < 0 && ROOM_TYPE_RE.test(lines[i])) roomIdx = i;
@@ -833,20 +846,33 @@
     let metaStart = lines.length;
     if (roomIdx >= 0) metaStart = Math.min(metaStart, roomIdx);
     if (campusIdx >= 0) metaStart = Math.min(metaStart, campusIdx);
-    if (metaStart < 2) return null;
-
-    let room = '';
-    if (roomIdx >= 0) {
-      const m = lines[roomIdx].match(ROOM_NUM_RE);
-      if (m) room = zenToHanDigits(m[1]);
+    if (roomIdx < 0 && campusIdx < 0) {
+      return { ok: false, reason: '教室・キャンパス情報を認識できません', raw: rawJoined };
     }
-    const teacher = lines[metaStart - 1].trim();
-    const nameSlice = lines.slice(0, metaStart - 1);
+    if (metaStart < 2) {
+      return { ok: false, reason: 'ブロック構造を解析できません', raw: rawJoined };
+    }
+
+    let teacherIdx = metaStart - 1;
+    while (teacherIdx > 0 && BUILDING_RE.test(lines[teacherIdx])) teacherIdx--;
+    const teacher = (lines[teacherIdx] || '').trim();
+    const nameSlice = lines.slice(0, teacherIdx);
     const nameJoined = nameSlice.join('');
     const firstSpace = nameJoined.search(/[\s　]/);
     const name = (firstSpace >= 0 ? nameJoined.slice(0, firstSpace) : nameJoined).trim();
-    if (!name) return null;
-    return { name, teacher, room };
+    if (!name) {
+      return { ok: false, reason: '講義名を特定できません', raw: rawJoined };
+    }
+
+    let room = '';
+    if (roomIdx >= 0) {
+      const searchStr = lines.slice(Math.max(0, roomIdx - 1), roomIdx + 1).join('');
+      const m = searchStr.match(ROOM_NUM_RE);
+      if (m) room = zenToHanDigits(m[1]);
+    }
+    const result = { ok: true, classDef: { name, teacher, room } };
+    if (!room) result.warning = '教室番号を検出できません（手動設定が必要）';
+    return result;
   }
 
   function parseTimetableSheet(ws) {
@@ -871,6 +897,7 @@
     periodRows.sort((a, b) => a.row - b.row);
 
     const classes = [];
+    const issues = [];
     for (let i = 0; i < periodRows.length; i++) {
       const { period, row: startRow } = periodRows[i];
       const endRow = (i + 1 < periodRows.length) ? periodRows[i + 1].row - 1 : startRow + 10;
@@ -884,10 +911,15 @@
         }
         if (!lines.length) continue;
         const parsed = parseClassBlock(lines);
-        if (parsed) classes.push({ ...parsed, day, period });
+        if (parsed.ok) {
+          classes.push({ ...parsed.classDef, day, period });
+          if (parsed.warning) issues.push({ day, period, reason: parsed.warning, raw: lines.join(' / '), name: parsed.classDef.name });
+        } else {
+          issues.push({ day, period, reason: parsed.reason, raw: parsed.raw, name: '' });
+        }
       }
     }
-    return classes;
+    return { classes, issues };
   }
 
   function dedupeClasses(list) {
@@ -903,18 +935,20 @@
     await loadSheetJS();
     const buf = await file.arrayBuffer();
     const wb = XLSX.read(buf, { type: 'array' });
-    const termClasses = { front: [], back: [] };
+    const termData = { front: { classes: [], issues: [] }, back: { classes: [], issues: [] } };
     for (const name of wb.SheetNames) {
       const ws = wb.Sheets[name];
       const termCell = ws['I6'];
       const termStr = termCell && termCell.v != null ? String(termCell.v) : '';
       const bucket = termStr.includes('後期') ? 'back' : termStr.includes('前期') ? 'front' : null;
       if (!bucket) continue;
-      termClasses[bucket].push(...parseTimetableSheet(ws));
+      const { classes, issues } = parseTimetableSheet(ws);
+      termData[bucket].classes.push(...classes);
+      termData[bucket].issues.push(...issues);
     }
     return {
-      front: dedupeClasses(termClasses.front),
-      back: dedupeClasses(termClasses.back),
+      front: { classes: dedupeClasses(termData.front.classes), issues: termData.front.issues },
+      back: { classes: dedupeClasses(termData.back.classes), issues: termData.back.issues },
     };
   }
 
@@ -935,6 +969,12 @@
     importDialog.showModal();
   }
 
+  function fmtCount(term) {
+    const n = term.classes.length;
+    const w = term.issues.length;
+    return w > 0 ? `${n} 件 ／ ⚠ ${w} 件未解決` : `${n} 件`;
+  }
+
   importFile.addEventListener('change', async () => {
     const f = importFile.files[0];
     if (!f) return;
@@ -944,10 +984,11 @@
     try {
       const parsed = await parseXlsxFile(f);
       importParsed = parsed;
-      document.getElementById('front-count').textContent = parsed.front.length + ' 件';
-      document.getElementById('back-count').textContent = parsed.back.length + ' 件';
+      document.getElementById('front-count').textContent = fmtCount(parsed.front);
+      document.getElementById('back-count').textContent = fmtCount(parsed.back);
       importResult.hidden = false;
-      importConfirm.disabled = (parsed.front.length + parsed.back.length) === 0;
+      const total = parsed.front.classes.length + parsed.back.classes.length;
+      importConfirm.disabled = total === 0;
       if (importConfirm.disabled) {
         importError.textContent = '講義を認識できませんでした。ファイル形式をご確認ください。';
         importError.hidden = false;
@@ -959,11 +1000,31 @@
   });
 
   document.getElementById('import-cancel').addEventListener('click', () => importDialog.close());
+
+  const issuesDialog = document.getElementById('issues-dialog');
+  const issuesList = document.getElementById('issues-list');
+  document.getElementById('issues-close').addEventListener('click', () => issuesDialog.close());
+
+  function showIssues(issues) {
+    if (!issues || !issues.length) return;
+    issuesList.innerHTML = issues.map(it => `
+      <div class="card" style="background:var(--panel-2);margin-bottom:8px;padding:10px;">
+        <div style="font-weight:600;margin-bottom:4px;">
+          ${DAY_NAMES[it.day]}曜 ${it.period}限${it.name ? ' ・ ' + escapeHtml(it.name) : ''}
+        </div>
+        <div style="color:var(--warn);font-size:13px;margin-bottom:4px;">${escapeHtml(it.reason)}</div>
+        <div style="color:var(--muted);font-size:12px;word-break:break-all;">${escapeHtml(it.raw)}</div>
+      </div>
+    `).join('');
+    issuesDialog.showModal();
+  }
+
   importConfirm.addEventListener('click', () => {
     if (!importParsed) return;
     const term = document.querySelector('input[name=term]:checked').value;
-    const source = importParsed[term] || [];
-    if (!source.length) return;
+    const termData = importParsed[term];
+    if (!termData || !termData.classes.length) return;
+    const source = termData.classes;
     if (!confirm(`${term === 'front' ? '前期' : '後期'} ${source.length}件をインポートし、現在の時間割を置き換えます。よろしいですか？`)) return;
     state.classes = source.map(c => ({ id: uid(), name: c.name, day: c.day, period: c.period, room: c.room }));
     if (source.some(c => c.day === 6)) state.showSaturday = true;
@@ -971,6 +1032,7 @@
     importDialog.close();
     renderAll();
     switchTab('week');
+    if (termData.issues.length) showIssues(termData.issues);
   });
 
   renderAll();
