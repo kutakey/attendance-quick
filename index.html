@@ -186,6 +186,48 @@
     font-size: 11px; margin-top: 24px; padding: 12px;
   }
   a { color: var(--accent); }
+
+  /* Onboarding */
+  #ob-overlay {
+    position: fixed; inset: 0; z-index: 200;
+    background: var(--bg); overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  .ob-inner {
+    max-width: 500px; width: 100%; margin: 0 auto;
+    padding: env(safe-area-inset-top, 20px) 20px calc(env(safe-area-inset-bottom, 0px) + 24px);
+    min-height: 100dvh; display: flex; flex-direction: column;
+  }
+  .ob-dots {
+    display: flex; gap: 8px; justify-content: center;
+    padding: 20px 0 28px; flex-shrink: 0;
+  }
+  .ob-dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--panel-2); transition: all 0.25s;
+  }
+  .ob-dot.active { background: var(--accent); width: 24px; border-radius: 4px; }
+  #ob-content { flex: 1; }
+  .ob-footer { display: flex; gap: 10px; margin-top: 24px; flex-shrink: 0; }
+  .ob-step {
+    display: flex; gap: 12px; align-items: flex-start;
+    background: var(--panel-2); border-radius: 10px;
+    padding: 12px 14px; margin-bottom: 8px;
+    font-size: 14px; line-height: 1.5;
+  }
+  .ob-step-num {
+    background: var(--accent); color: white; border-radius: 50%;
+    width: 24px; height: 24px; min-width: 24px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 12px; font-weight: 700;
+  }
+  .ob-block {
+    border-radius: 10px; padding: 12px 14px; margin-bottom: 8px;
+    font-size: 13px; line-height: 1.65;
+  }
+  .ob-block.warn { background: rgba(239,68,68,.1); border: 1px solid rgba(239,68,68,.3); }
+  .ob-block.info { background: rgba(59,130,246,.1); border: 1px solid rgba(59,130,246,.25); }
+  .ob-block.ok   { background: rgba(16,185,129,.1); border: 1px solid rgba(16,185,129,.25); }
 </style>
 </head>
 <body>
@@ -203,6 +245,17 @@
   <section id="tab-week" hidden></section>
   <section id="tab-settings" hidden></section>
 </main>
+
+<div id="ob-overlay" hidden>
+  <div class="ob-inner">
+    <div id="ob-dots" class="ob-dots"></div>
+    <div id="ob-content"></div>
+    <div class="ob-footer">
+      <button id="ob-prev" class="btn secondary" style="flex:0 0 80px;">← 戻る</button>
+      <button id="ob-next" class="btn" style="flex:1;">次へ →</button>
+    </div>
+  </div>
+</div>
 
 <dialog id="import-dialog">
   <h2>Excelからインポート</h2>
@@ -291,7 +344,7 @@
 
   function loadState() {
     let migrated = false;
-    const result = { periods: [...DEFAULT_PERIODS], classes: [], showSaturday: false };
+    const result = { periods: [...DEFAULT_PERIODS], classes: [], showSaturday: false, onboardingDone: false };
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
       if (raw) {
@@ -300,6 +353,7 @@
         else if (Array.isArray(s.periods)) migrated = true;
         if (Array.isArray(s.classes)) result.classes = s.classes;
         if (typeof s.showSaturday === 'boolean') result.showSaturday = s.showSaturday;
+        if (typeof s.onboardingDone === 'boolean') result.onboardingDone = s.onboardingDone;
       }
     } catch {}
     if (migrated) localStorage.setItem(STORAGE_KEY, JSON.stringify(result));
@@ -613,6 +667,10 @@
         <div style="height:8px"></div>
         <button class="btn danger" id="reset-btn">全データを削除</button>
       </div>`;
+    html += `<div class="section-title">その他</div>
+      <div class="card">
+        <button class="btn secondary" id="show-tutorial-btn" style="width:100%;">チュートリアルを再表示</button>
+      </div>`;
     html += `<div class="footer-note">データはこの端末のブラウザに保存されます（localStorage）</div>`;
 
     root.innerHTML = html;
@@ -625,6 +683,7 @@
 
     document.getElementById('add-class-btn').addEventListener('click', () => openClassDialog(null));
     document.getElementById('import-xlsx-btn').addEventListener('click', openImportDialog);
+    document.getElementById('show-tutorial-btn').addEventListener('click', () => startOnboarding(true));
     root.querySelectorAll('[data-edit]').forEach(el => {
       el.addEventListener('click', () => openClassDialog(el.dataset.edit));
     });
@@ -1055,9 +1114,174 @@
   importFrontBtn.addEventListener('click', () => doImport('front'));
   importBackBtn.addEventListener('click', () => doImport('back'));
 
+  // ====== Onboarding ======
+  const OB_BUG_FORM_URL = 'https://github.com/kutakey/attendance-quick/issues/new';
+
+  function isStandalone() {
+    return window.matchMedia('(display-mode: standalone)').matches || !!navigator.standalone;
+  }
+
+  let obPages = [], obCurrent = 0;
+
+  function startOnboarding(force = false) {
+    obPages = [];
+    if (!isStandalone()) obPages.push('install');
+    obPages.push('disclaimer', 'import', 'bugreport');
+    obCurrent = 0;
+    renderObPage();
+    document.getElementById('ob-overlay').hidden = false;
+    if (force) { state.onboardingDone = false; saveState(); }
+  }
+
+  function obNext() {
+    if (obCurrent < obPages.length - 1) { obCurrent++; renderObPage(); }
+    else closeOnboarding();
+  }
+  function obPrev() {
+    if (obCurrent > 0) { obCurrent--; renderObPage(); }
+  }
+  function closeOnboarding() {
+    document.getElementById('ob-overlay').hidden = true;
+    state.onboardingDone = true;
+    saveState();
+  }
+
+  function getObHtml(page) {
+    if (page === 'install') return `
+      <h2 style="font-size:22px;font-weight:700;margin:0 0 8px;line-height:1.3;">ホーム画面に<br>追加してください</h2>
+      <p style="color:var(--muted);font-size:14px;margin:0 0 24px;line-height:1.6;">
+        Safariのホーム画面に追加すると、アプリとして快適に使えます。
+      </p>
+      <div class="ob-step">
+        <div class="ob-step-num">1</div>
+        <div>画面下部の<strong>共有ボタン（□↑）</strong>をタップ</div>
+      </div>
+      <div class="ob-step">
+        <div class="ob-step-num">2</div>
+        <div>メニューを下にスクロールして<strong>「ホーム画面に追加」</strong>をタップ</div>
+      </div>
+      <div class="ob-step">
+        <div class="ob-step-num">3</div>
+        <div>右上の<strong>「追加」</strong>をタップして完了</div>
+      </div>
+      <div class="ob-block info" style="margin-top:16px;">
+        📱 ホーム画面のアイコンから起動するとフルスクリーンで動作します。<br>すでに追加済みの場合はそのまま「次へ」を押してください。
+      </div>`;
+
+    if (page === 'disclaimer') return `
+      <h2 style="font-size:20px;font-weight:700;margin:0 0 16px;">使用上の注意・免責事項</h2>
+      <div class="ob-block info">📋 このアプリは、出席登録のQRコード読み込みを省略する<strong>ショートカットツール</strong>です。</div>
+      <div class="ob-block warn">📶 <strong>学内Wi-Fi（CIT_Wi-Fi）に接続していないと出席サイトは機能しません。</strong>必ず接続した状態でご使用ください。</div>
+      <div class="ob-block warn">⚠️ このアプリは毎回の出席操作の手間を減らす目的であり、<strong>不正な出席登録を推奨するものではありません。</strong></div>
+      <div class="ob-block warn">❌ このアプリの使用による出欠・成績・その他大学からの不利益について、<strong>開発者は一切の責任を負いません。</strong></div>
+      <div class="ob-block ok">🔒 時間割データは<strong>端末内のみ</strong>に保存され、開発者を含む第三者は閲覧できません。</div>
+      <div class="ob-block warn">🗑️ ブラウザのデータ消去・再インストールで<strong>時間割データは消滅します。</strong>設定画面からエクスポートして定期バックアップを推奨します。</div>`;
+
+    if (page === 'import') return `
+      <h2 style="font-size:20px;font-weight:700;margin:0 0 8px;">時間割を取り込む</h2>
+      <p style="color:var(--muted);font-size:13px;margin:0 0 14px;line-height:1.6;">
+        CITポータル（PC版）の「授業・出席」→「時間割照会」からダウンロードできる
+        <strong>学生時間割表（.xlsx）</strong>を読み込めます。
+      </p>
+      <div class="ob-block warn" style="margin-bottom:10px;">
+        ⚠️ <strong>一部の授業は教室番号が自動取得できません</strong>（例: 初年次教育 / 12号館6階各科共用製図室）。<br>
+        その場合は教室に貼られているQRコードの下に記載の<strong>4桁の番号</strong>を後から手動登録してください。
+      </div>
+      <div class="ob-block info" style="margin-bottom:16px;">
+        🔄 学期が変わると教室番号が変わる場合があります。後期開始時に再インポートを推奨します。
+      </div>
+      <label style="display:block;margin-bottom:6px;color:var(--muted);font-size:13px;">Excelファイルを選択（.xlsx）</label>
+      <input type="file" id="ob-xlsx-input" accept=".xlsx" style="width:100%;margin-bottom:10px;">
+      <div id="ob-import-msg" style="font-size:13px;min-height:18px;margin-bottom:10px;"></div>
+      <div id="ob-import-btns" hidden style="display:flex;flex-direction:column;gap:8px;">
+        <button class="btn" id="ob-front-btn" disabled></button>
+        <button class="btn secondary" id="ob-back-btn" disabled></button>
+      </div>
+      <p style="color:var(--muted);font-size:12px;margin-top:14px;">後で取り込む場合はスキップしてください。設定タブからいつでもインポートできます。</p>`;
+
+    if (page === 'bugreport') return `
+      <h2 style="font-size:20px;font-weight:700;margin:0 0 12px;">バグ報告のお願い</h2>
+      <div class="ob-block warn">🚧 このアプリはまだ<strong>プレリリース段階</strong>のため、予期せぬバグが発生する場合があります。</div>
+      <p style="font-size:14px;line-height:1.7;margin:16px 0;">
+        バグを発見した際は、以下のフォームから<strong>工大メールアドレス</strong>で報告いただけると助かります（任意）。
+      </p>
+      <a href="${OB_BUG_FORM_URL}" target="_blank" rel="noopener"
+         class="btn" style="display:block;text-align:center;text-decoration:none;margin-bottom:20px;">
+        バグ報告フォームを開く →
+      </a>
+      <div class="ob-block ok">
+        ご協力ありがとうございます。いただいた報告はアプリの改善に活用させていただきます。
+      </div>
+      <p style="color:var(--muted);font-size:12px;margin-top:16px;line-height:1.6;">
+        「はじめる」をタップするとアプリが起動します。
+      </p>`;
+
+    return '';
+  }
+
+  function renderObPage() {
+    const page = obPages[obCurrent];
+    const isFirst = obCurrent === 0;
+    const isLast = obCurrent === obPages.length - 1;
+
+    document.getElementById('ob-dots').innerHTML = obPages.map((_, i) =>
+      `<div class="ob-dot${i === obCurrent ? ' active' : ''}"></div>`
+    ).join('');
+    document.getElementById('ob-content').innerHTML = getObHtml(page);
+    document.getElementById('ob-prev').hidden = isFirst;
+    document.getElementById('ob-next').textContent = isLast ? 'はじめる ✓' : '次へ →';
+
+    if (page === 'import') wireObImport();
+  }
+
+  function wireObImport() {
+    let obParsed = null;
+    const msg = document.getElementById('ob-import-msg');
+    const btns = document.getElementById('ob-import-btns');
+    const frontBtn = document.getElementById('ob-front-btn');
+    const backBtn = document.getElementById('ob-back-btn');
+
+    document.getElementById('ob-xlsx-input').addEventListener('change', async (e) => {
+      const f = e.target.files[0]; if (!f) return;
+      msg.style.color = 'var(--muted)'; msg.textContent = '読み込み中…';
+      btns.hidden = true;
+      try {
+        obParsed = await parseXlsxFile(f);
+        frontBtn.textContent = `前期をインポート（${obParsed.front.classes.length}件）`;
+        backBtn.textContent = `後期をインポート（${obParsed.back.classes.length}件）`;
+        frontBtn.disabled = obParsed.front.classes.length === 0;
+        backBtn.disabled = obParsed.back.classes.length === 0;
+        btns.hidden = false;
+        msg.style.color = 'var(--ok)'; msg.textContent = '✓ ファイルを読み込みました';
+      } catch (err) {
+        msg.style.color = 'var(--danger)';
+        msg.textContent = '読み込み失敗: ' + (err.message || err);
+      }
+    });
+
+    function doObImport(key) {
+      if (!obParsed) return;
+      const td = obParsed[key];
+      if (!td?.classes?.length) return;
+      state.classes = td.classes.map(c => ({ id: uid(), name: c.name, day: c.day, period: c.period, room: c.room }));
+      if (td.classes.some(c => c.day === 6)) state.showSaturday = true;
+      saveState(); renderAll();
+      const label = key === 'front' ? '前期' : '後期';
+      msg.style.color = 'var(--ok)';
+      msg.textContent = `✓ ${label} ${td.classes.length}件をインポートしました`;
+      btns.hidden = true;
+    }
+    frontBtn.addEventListener('click', () => doObImport('front'));
+    backBtn.addEventListener('click', () => doObImport('back'));
+  }
+
+  document.getElementById('ob-next').addEventListener('click', obNext);
+  document.getElementById('ob-prev').addEventListener('click', obPrev);
+
   renderAll();
   tickClock();
   setInterval(() => { tickClock(); renderToday(); }, 30000);
+  if (!state.onboardingDone) startOnboarding();
 </script>
 </body>
 </html>
