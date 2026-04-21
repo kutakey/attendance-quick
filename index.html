@@ -1271,9 +1271,17 @@
       if (td.classes.some(c => c.day === 6)) state.showSaturday = true;
       saveState(); renderAll();
       const label = key === 'front' ? '前期' : '後期';
-      msg.style.color = 'var(--ok)';
-      msg.textContent = `✓ ${label} ${td.classes.length}件をインポートしました`;
-      btns.hidden = true;
+      const doneBtn  = key === 'front' ? frontBtn : backBtn;
+      const otherBtn = key === 'front' ? backBtn  : frontBtn;
+      // 押したボタンを緑・完了表示に
+      doneBtn.style.cssText  = 'background:var(--ok);color:white;width:100%;padding:18px 16px;border-radius:10px;border:none;font-size:16px;font-weight:700;cursor:default;margin-bottom:8px;';
+      doneBtn.textContent    = `✓ ${label} ${td.classes.length}件 インポート完了！`;
+      doneBtn.disabled = true;
+      // もう一方はグレーアウト
+      otherBtn.disabled = true;
+      otherBtn.style.opacity = '0.25';
+      // メッセージ
+      msg.innerHTML = `<div style="background:rgba(16,185,129,.15);border:1px solid rgba(16,185,129,.4);border-radius:8px;padding:10px 12px;color:var(--ok);font-weight:600;">時間割を取り込みました。「次へ」で進んでください。</div>`;
     }
     frontBtn.addEventListener('click', () => doObImport('front'));
     backBtn.addEventListener('click', () => doObImport('back'));
