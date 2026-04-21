@@ -434,7 +434,19 @@
       return `<div style="font-size:12px;color:${color};margin-bottom:10px;">${st.msg}</div>`;
     }
 
-    if (current) {
+    // 次の講義が20分以内に始まる場合は優先表示
+    const nextIsImminent = next && (timeToMin(next._startP.start) - nowM) <= ATTENDANCE_PRE_MIN;
+
+    if (nextIsImminent) {
+      html += `
+        <div class="card now-card">
+          <div class="now-label">次の講義</div>
+          <h2 class="now-title">${escapeHtml(next.name)}</h2>
+          <div class="now-meta">${periodLabel(next)} ${next._startP.start}〜${next._endP.end} ・ 教室 ${escapeHtml(fmtRoom(next.room))}</div>
+          ${statusLine(next)}
+          ${bigBtn(next)}
+        </div>`;
+    } else if (current) {
       html += `
         <div class="card now-card">
           <div class="now-label">今の講義</div>
