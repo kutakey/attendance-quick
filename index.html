@@ -312,7 +312,7 @@
     <label>終了時限（連続コマの場合のみ変更）
       <select name="endPeriod" required></select>
     </label>
-    <label>教室番号（空欄可 ／ 3桁=津田沼・4桁=新習志野）
+    <label>教室番号（空欄可）
       <input type="text" name="room" inputmode="numeric" pattern="\d{3,4}" maxlength="4" placeholder="例: 5202"
         title="3桁または4桁の半角数字で入力してください">
       <div id="room-campus-hint" style="font-size:12px;color:var(--muted);margin-top:4px;min-height:1em;"></div>
@@ -1180,7 +1180,7 @@
     if (page === 'import') return `
       <h2 style="font-size:20px;font-weight:700;margin:0 0 8px;">時間割を取り込む</h2>
       <p style="color:var(--muted);font-size:13px;margin:0 0 14px;line-height:1.6;">
-        CITポータル（PC版）の「授業・出席」→「時間割照会」からダウンロードできる
+        CITポータル（PC版）の「教務関連」→「学生時間割表」からダウンロードできる
         <strong>学生時間割表（.xlsx）</strong>を読み込めます。
       </p>
       <div class="ob-block warn" style="margin-bottom:10px;">
