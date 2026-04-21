@@ -1142,7 +1142,8 @@
   }
   function closeOnboarding() {
     document.getElementById('ob-overlay').hidden = true;
-    state.onboardingDone = true;
+    const noShowAgain = document.getElementById('ob-no-show-again');
+    state.onboardingDone = noShowAgain ? noShowAgain.checked : true;
     saveState();
   }
 
@@ -1214,7 +1215,11 @@
       </div>
       <p style="color:var(--muted);font-size:12px;margin-top:16px;line-height:1.6;">
         「はじめる」をタップするとアプリが起動します。
-      </p>`;
+      </p>
+      <label style="display:flex;align-items:center;gap:10px;margin-top:20px;padding:14px;background:var(--panel-2);border-radius:10px;cursor:pointer;">
+        <input type="checkbox" id="ob-no-show-again" checked style="width:auto;transform:scale(1.3);flex-shrink:0;">
+        <span style="font-size:14px;color:var(--text);">次回から表示しない</span>
+      </label>`;
 
     return '';
   }
