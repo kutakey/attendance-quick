@@ -664,6 +664,18 @@
           <button class="btn secondary" id="export-btn">エクスポート</button>
           <button class="btn secondary" id="import-btn">インポート</button>
         </div>
+        <div style="height:12px"></div>
+        <div style="color:var(--muted);font-size:13px;margin-bottom:6px;">📅 カレンダーに書き出す (.ics)</div>
+        <div class="btn-row">
+          <button class="btn secondary" data-ics="front">前期</button>
+          <button class="btn secondary" data-ics="back">後期</button>
+          <button class="btn secondary" data-ics="both">両方</button>
+        </div>
+        <div style="font-size:12px;color:var(--muted);margin-top:6px;line-height:1.6;">
+          2026年度の学年暦に準拠。各曜日<strong>13週分</strong>のみで自動終了します（休講日は除外）。<br>
+          iOS/Googleカレンダー等に取り込むと、開始5分前に通知が来ます。<br>
+          iOSは取り込み時に<strong>「新規カレンダーを追加」</strong>を選ぶと、学期末にカレンダーごと一括削除できます。
+        </div>
         <div style="height:8px"></div>
         <button class="btn danger" id="reset-btn">全データを削除</button>
       </div>`;
@@ -704,6 +716,9 @@
       a.download = 'attendance-timetable.json';
       a.click();
       URL.revokeObjectURL(a.href);
+    });
+    root.querySelectorAll('[data-ics]').forEach(b => {
+      b.addEventListener('click', () => exportIcs(b.dataset.ics));
     });
     document.getElementById('import-btn').addEventListener('click', () => {
       const inp = document.createElement('input');
@@ -1116,6 +1131,159 @@
 
   importFrontBtn.addEventListener('click', () => doImport('front'));
   importBackBtn.addEventListener('click', () => doImport('back'));
+
+  // ====== ICS Export ======
+  // 2026年度学年暦に基づく授業日設定（各曜日13週分になるよう設計）
+  const TERM_2026 = {
+    front: {
+      label: '前期',
+      // 各曜日(1=月..6=土)の初回授業日（YYYY-MM-DD）
+      firstClassByDay: {
+        1: '2026-04-13', 2: '2026-04-14', 3: '2026-04-15',
+        4: '2026-04-16', 5: '2026-04-17', 6: '2026-04-11',
+      },
+      // 各曜日の最終授業日（13回目）
+      lastClassByDay: {
+        1: '2026-07-13', 2: '2026-07-14', 3: '2026-07-15',
+        4: '2026-07-16', 5: '2026-07-17', 6: '2026-07-11',
+      },
+      // 休講日（祝日・自学自習日・振替）
+      excludeDates: [
+        '2026-04-30', // 木 自学自習
+        '2026-05-01', // 金 開学記念日振替
+        '2026-05-02', // 土 自学自習
+        '2026-05-04', // 月 みどりの日
+        '2026-05-05', // 火 こどもの日
+        '2026-05-06', // 水 振替休日
+      ],
+    },
+    back: {
+      label: '後期',
+      firstClassByDay: {
+        1: '2026-09-21', 2: '2026-09-22', 3: '2026-09-23',
+        4: '2026-09-24', 5: '2026-09-18', 6: '2026-09-19',
+      },
+      lastClassByDay: {
+        1: '2026-12-21', 2: '2026-12-15', 3: '2026-12-16',
+        4: '2026-12-17', 5: '2026-12-18', 6: '2026-12-19',
+      },
+      excludeDates: [
+        '2026-11-20', // 金 津田沼祭準備
+        '2026-11-21', // 土 津田沼祭
+        '2026-11-23', // 月 津田沼祭後片付け
+      ],
+    },
+  };
+
+  function pad2(n) { return String(n).padStart(2, '0'); }
+  function fmtIcsLocal(d) {
+    return d.getFullYear() + pad2(d.getMonth() + 1) + pad2(d.getDate())
+      + 'T' + pad2(d.getHours()) + pad2(d.getMinutes()) + '00';
+  }
+  function fmtIcsUtcStamp(d = new Date()) {
+    return d.getUTCFullYear() + pad2(d.getUTCMonth() + 1) + pad2(d.getUTCDate())
+      + 'T' + pad2(d.getUTCHours()) + pad2(d.getUTCMinutes()) + pad2(d.getUTCSeconds()) + 'Z';
+  }
+  function escIcs(s) {
+    return String(s).replace(/\\/g, '\\\\').replace(/;/g, '\\;').replace(/,/g, '\\,').replace(/\n/g, '\\n');
+  }
+  function foldIcs(line) {
+    if (line.length <= 75) return line;
+    const out = [line.slice(0, 75)];
+    let s = line.slice(75);
+    while (s.length > 74) { out.push(' ' + s.slice(0, 74)); s = s.slice(74); }
+    if (s) out.push(' ' + s);
+    return out.join('\r\n');
+  }
+  function parseYmd(s) {
+    const [y, mo, da] = s.split('-').map(Number);
+    return new Date(y, mo - 1, da);
+  }
+
+  function buildIcs(termKey) {
+    const termKeys = termKey === 'both' ? ['front', 'back'] : [termKey];
+    const lines = [
+      'BEGIN:VCALENDAR',
+      'VERSION:2.0',
+      'PRODID:-//Quick Attendance//JP',
+      'CALSCALE:GREGORIAN',
+      'METHOD:PUBLISH',
+      'X-WR-CALNAME:クイック出席',
+    ];
+    const dtstamp = fmtIcsUtcStamp();
+    const BYDAY = { 1: 'MO', 2: 'TU', 3: 'WE', 4: 'TH', 5: 'FR', 6: 'SA' };
+
+    for (const tk of termKeys) {
+      const term = TERM_2026[tk];
+      if (!term) continue;
+      for (const d of [1, 2, 3, 4, 5, 6]) {
+        const merged = mergeConsecutive(dayClassesSorted(d));
+        if (!merged.length) continue;
+        const firstStr = term.firstClassByDay[d];
+        const lastStr = term.lastClassByDay[d];
+        if (!firstStr || !lastStr) continue;
+        const firstDate = parseYmd(firstStr);
+        const lastDate = parseYmd(lastStr);
+        const exForDay = term.excludeDates.filter(s => parseYmd(s).getDay() === d);
+
+        for (const m of merged) {
+          const [sh, sm] = m._startP.start.split(':').map(Number);
+          const [eh, em] = m._endP.end.split(':').map(Number);
+          const start = new Date(firstDate); start.setHours(sh, sm, 0, 0);
+          const end = new Date(firstDate); end.setHours(eh, em, 0, 0);
+          const untilUtc = new Date(Date.UTC(
+            lastDate.getFullYear(), lastDate.getMonth(), lastDate.getDate(), 23, 59, 59
+          ));
+          const url = m.room ? attendanceLink(m.room) : '';
+          const loc = m.room ? fmtRoom(m.room) : '';
+          const descParts = [];
+          if (url) descParts.push('出席URL: ' + url);
+          descParts.push(`${term.label} ${periodLabel(m)}`);
+          const uid = `qa-${tk}-d${d}-p${m.startPeriod}-${m.endPeriod}-r${m.room || 'none'}@quickattendance`;
+
+          lines.push('BEGIN:VEVENT');
+          lines.push('UID:' + uid);
+          lines.push('DTSTAMP:' + dtstamp);
+          lines.push('DTSTART:' + fmtIcsLocal(start));
+          lines.push('DTEND:' + fmtIcsLocal(end));
+          lines.push('SUMMARY:' + escIcs(m.name));
+          if (loc) lines.push('LOCATION:' + escIcs(loc));
+          if (url) lines.push('URL:' + url);
+          lines.push('DESCRIPTION:' + escIcs(descParts.join('\n')));
+          lines.push('RRULE:FREQ=WEEKLY;BYDAY=' + BYDAY[d] + ';UNTIL=' + fmtIcsUtcStamp(untilUtc));
+          for (const exStr of exForDay) {
+            const exD = parseYmd(exStr);
+            exD.setHours(sh, sm, 0, 0);
+            lines.push('EXDATE:' + fmtIcsLocal(exD));
+          }
+          lines.push('BEGIN:VALARM');
+          lines.push('ACTION:DISPLAY');
+          lines.push('DESCRIPTION:' + escIcs(m.name + ' 出席登録の時間です'));
+          lines.push('TRIGGER:-PT5M');
+          lines.push('END:VALARM');
+          lines.push('END:VEVENT');
+        }
+      }
+    }
+    lines.push('END:VCALENDAR');
+    return lines.map(foldIcs).join('\r\n');
+  }
+
+  function exportIcs(termKey) {
+    if (!state.classes.length) {
+      alert('登録された講義がありません');
+      return;
+    }
+    if (!['front', 'back', 'both'].includes(termKey)) return;
+    const ics = buildIcs(termKey);
+    const suffix = termKey === 'front' ? 'front' : termKey === 'back' ? 'back' : 'all';
+    const blob = new Blob([ics], { type: 'text/calendar;charset=utf-8' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `attendance-2026-${suffix}.ics`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }
 
   // ====== Onboarding ======
   const OB_BUG_FORM_URL = 'https://forms.gle/xmWYexzcaQeQ48kK8';
